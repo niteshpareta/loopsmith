@@ -9,6 +9,7 @@ import 'audio.dart';
 import 'haptics.dart';
 import 'levels.dart';
 import 'profile.dart';
+import 'reminders.dart';
 import 'store.dart';
 
 /// Everything the screens need, created once at startup.
@@ -21,7 +22,8 @@ class Services {
     required this.ads,
     required this.store,
     required this.analytics,
-  }) {
+    Reminders? reminders,
+  }) : reminders = reminders ?? NoReminders() {
     store.onGranted = _grant;
     profile.addListener(_applySettings);
     _applySettings();
@@ -34,6 +36,7 @@ class Services {
   final AdsService ads;
   final StoreService store;
   final Analytics analytics;
+  final Reminders reminders;
 
   DateTime now() => profile.now();
 
@@ -52,6 +55,7 @@ class Services {
       ads: createAds(onOpened: audio.suspend, onClosed: audio.resume),
       store: createStore(),
       analytics: DebugAnalytics(),
+      reminders: createReminders(),
     );
     unawaited(audio.init().then((_) => services._applySettings()));
     unawaited(services.ads.init());

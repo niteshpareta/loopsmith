@@ -26,6 +26,15 @@ int dailyNumber(DateTime now) {
   return n < 1 ? 1 : n;
 }
 
+/// Weeks are counted from this Monday. Weekly runs change every Monday.
+final DateTime weeklyEpoch = DateTime.utc(2026, 10, 26);
+
+/// Which weekly run [now] falls in, starting at 0.
+int weekIndex(DateTime now) {
+  final n = daysBetween(weeklyEpoch, weekStart(now)) ~/ 7;
+  return n < 0 ? 0 : n;
+}
+
 /// Monday of the week containing [now].
 DateTime weekStart(DateTime now) {
   final d = _dateOnly(now);

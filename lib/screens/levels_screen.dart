@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../game/economy.dart';
+import '../l10n/strings.dart';
 import '../render/palette.dart';
 import '../services/services.dart';
 import '../ui/widgets.dart';
@@ -16,6 +17,7 @@ class LevelsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final services = AppScope.of(context);
     return Scaffold(
       backgroundColor: p.bg,
@@ -29,10 +31,10 @@ class LevelsScreen extends StatelessWidget {
                 return Column(
                   children: [
                     TopBar(
-                      title: 'Levels',
+                      title: s('levels.title'),
                       onBack: () => Navigator.of(context).pop(),
                       trailing: Pill(
-                        label: '${profile.totalStars} stars',
+                        label: s.count('count.stars', profile.totalStars),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -51,7 +53,7 @@ class LevelsScreen extends StatelessWidget {
                               maxCrossAxisExtent: 76,
                               mainAxisSpacing: 10,
                               crossAxisSpacing: 10,
-                              childAspectRatio: 0.92,
+                              mainAxisExtent: 76,
                             ),
                         itemCount: services.levels.count,
                         itemBuilder: (context, index) {
@@ -66,8 +68,8 @@ class LevelsScreen extends StatelessWidget {
                                   )
                                 : null,
                             label: open
-                                ? 'Level $id, $stars of 3 stars'
-                                : 'Level $id, locked',
+                                ? s('levels.open', {'n': id, 'stars': stars})
+                                : s('levels.locked', {'n': id}),
                             child: Container(
                               decoration: BoxDecoration(
                                 color: p.card,
@@ -77,53 +79,59 @@ class LevelsScreen extends StatelessWidget {
                                   width: current ? 2 : 1,
                                 ),
                               ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    '$id',
-                                    style: AppText.display(
-                                      p,
-                                      17,
-                                      weight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  if (!open)
-                                    Icon(
-                                      Icons.lock_rounded,
-                                      size: 14,
-                                      color: p.dim,
-                                    )
-                                  else
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        for (var s = 0; s < 3; s++)
-                                          Icon(
-                                            s < stars
-                                                ? Icons.star_rounded
-                                                : Icons.star_outline_rounded,
-                                            size: 13,
-                                            color: s < stars ? p.brass : p.line,
-                                          ),
-                                      ],
-                                    ),
-                                  if (Economy.isKnotLevel(id) &&
-                                      open &&
-                                      stars == 0)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 2),
-                                      child: Text(
-                                        'knot',
-                                        style: AppText.body(
-                                          p,
-                                          10,
-                                          color: p.brass,
-                                        ),
+                              alignment: Alignment.center,
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '$id',
+                                      style: AppText.display(
+                                        p,
+                                        17,
+                                        weight: FontWeight.w500,
                                       ),
                                     ),
-                                ],
+                                    const SizedBox(height: 4),
+                                    if (!open)
+                                      Icon(
+                                        Icons.lock_rounded,
+                                        size: 14,
+                                        color: p.dim,
+                                      )
+                                    else
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          for (var i = 0; i < 3; i++)
+                                            Icon(
+                                              i < stars
+                                                  ? Icons.star_rounded
+                                                  : Icons.star_outline_rounded,
+                                              size: 13,
+                                              color: i < stars
+                                                  ? p.brass
+                                                  : p.line,
+                                            ),
+                                        ],
+                                      ),
+                                    if (Economy.isKnotLevel(id) &&
+                                        open &&
+                                        stars == 0)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          s('levels.knot'),
+                                          style: AppText.body(
+                                            p,
+                                            10,
+                                            color: p.brass,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                           );

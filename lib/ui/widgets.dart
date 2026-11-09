@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/strings.dart';
 import '../render/palette.dart';
 import '../services/services.dart';
 
@@ -364,7 +365,7 @@ class TopBar extends StatelessWidget {
               padding: const EdgeInsets.only(right: 8),
               child: Pressable(
                 onTap: onBack,
-                label: 'Back',
+                label: S.of(context)('common.back'),
                 child: Container(
                   width: 44,
                   height: 44,
@@ -426,7 +427,7 @@ Future<T?> showCardDialog<T>(
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: dismissible,
-    barrierLabel: 'Close',
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: p.shadow.withValues(alpha: 0.72),
     transitionDuration: const Duration(milliseconds: 220),
     pageBuilder: (context, _, _) => SafeArea(

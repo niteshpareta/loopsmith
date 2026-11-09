@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../game/economy.dart';
 import '../game/skins.dart';
+import '../l10n/strings.dart';
 import '../render/palette.dart';
 import '../services/audio.dart';
 import '../services/services.dart';
@@ -16,12 +17,16 @@ class ClearOverlay extends StatefulWidget {
   const ClearOverlay({
     super.key,
     required this.controller,
+    required this.hasNext,
     required this.onNext,
     required this.onReplay,
     required this.onLeave,
   });
 
   final PlayController controller;
+
+  /// There is another level (or weekly knot) to go straight on to.
+  final bool hasNext;
   final VoidCallback onNext;
   final VoidCallback onReplay;
   final VoidCallback onLeave;
@@ -63,7 +68,7 @@ class _ClearOverlayState extends State<ClearOverlay>
         }),
       );
     }
-    if (outcome.unlockedSkins.isNotEmpty) {
+    if (outcome.unlockedSkins.isNotEmpty || outcome.weeklyBonus) {
       _timers.add(
         Timer(const Duration(milliseconds: 1500), () {
           if (mounted) services.audio.play(Sfx.unlock);
@@ -84,16 +89,15 @@ class _ClearOverlayState extends State<ClearOverlay>
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final services = AppScope.of(context);
     final c = widget.controller;
     final outcome = c.outcome!;
     final profile = services.profile;
-    final daily = c.mode == PlayMode.daily;
-    final last = !daily && c.level.id >= services.levels.count;
     final title = switch (outcome.stars) {
-      3 => 'Clean release',
-      2 => 'Nicely done',
-      _ => 'Knot cleared',
+      3 => s('clear.three'),
+      2 => s('clear.two'),
+      _ => s('clear.one'),
     };
     final coins = outcome.coins * (_doubled ? 2 : 1);
 
@@ -110,7 +114,11 @@ class _ClearOverlayState extends State<ClearOverlay>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(c.title.toUpperCase(), style: AppText.label(p)),
+                    Text(
+                      c.title.toUpperCase(),
+                      textAlign: TextAlign.center,
+                      style: AppText.label(p),
+                    ),
                     const SizedBox(height: 8),
                     Text(
                       title,
@@ -119,7 +127,7 @@ class _ClearOverlayState extends State<ClearOverlay>
                     ),
                     const SizedBox(height: 14),
                     Semantics(
-                      label: '${outcome.stars} of 3 stars',
+                      label: s('clear.stars', {'n': outcome.stars}),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -150,8 +158,11 @@ class _ClearOverlayState extends State<ClearOverlay>
                         children: [
                           _row(
                             p,
-                            'Moves',
-                            '${c.knot.moves} · par ${c.level.par}',
+                            s('clear.moves'),
+                            s('clear.moves_value', {
+                              'moves': c.knot.moves,
+                              'par': c.level.par,
+                            }),
                           ),
                           if (coins > 0) ...[
                             const SizedBox(height: 8),
@@ -159,7 +170,7 @@ class _ClearOverlayState extends State<ClearOverlay>
                               children: [
                                 Expanded(
                                   child: Text(
-                                    'Reward',
+                                    s('clear.reward'),
                                     style: AppText.body(p, 15, color: p.dim),
                                   ),
                                 ),
@@ -167,32 +178,55 @@ class _ClearOverlayState extends State<ClearOverlay>
                               ],
                             ),
                           ],
-                          if (daily && outcome.firstClear) ...[
+                          if (c.mode == PlayMode.daily &&
+                              outcome.firstClear) ...[
                             const SizedBox(height: 8),
                             _row(
                               p,
-                              'Streak',
-                              outcome.streak == 1
-                                  ? '1 day'
-                                  : '${outcome.streak} days',
+                              s('clear.streak'),
+                              s.count('count.days', outcome.streak),
+                            ),
+                          ],
+                          if (c.mode == PlayMode.weekly) ...[
+                            const SizedBox(height: 8),
+                            _row(
+                              p,
+                              s('weekly.title'),
+                              s('clear.of', {
+                                'n': outcome.weeklyDone,
+                                'total': 7,
+                              }),
                             ),
                           ],
                         ],
                       ),
                     ),
-                    if (daily &&
-                        (outcome.saverUsed || outcome.saverEarned)) ...[
+                    if (outcome.saverUsed || outcome.saverEarned) ...[
                       const SizedBox(height: 10),
                       Text(
                         outcome.saverUsed
-                            ? 'A streak saver covered the day you missed.'
-                            : 'You earned a streak saver. It forgives one missed day.',
+                            ? s('clear.saver_used')
+                            : s('clear.saver_earned'),
                         textAlign: TextAlign.center,
                         style: AppText.body(p, 13.5, color: p.dim),
                       ),
                     ],
+                    if (outcome.weeklyBonus) ...[
+                      const SizedBox(height: 12),
+                      Panel(
+                        highlight: true,
+                        child: Text(
+                          s('clear.weekly_bonus', {
+                            'coins': Economy.weeklyBonus,
+                          }),
+                          textAlign: TextAlign.center,
+                          style: AppText.body(p, 15, weight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
                     ..._collection(
                       p,
+                      s,
                       services,
                       outcome.ringEarned,
                       outcome.unlockedSkins,
@@ -201,8 +235,12 @@ class _ClearOverlayState extends State<ClearOverlay>
                     SizedBox(
                       width: double.infinity,
                       child: BrassButton(
-                        label: daily || last ? 'Done' : 'Next level',
-                        onTap: daily || last ? widget.onLeave : widget.onNext,
+                        label: !widget.hasNext
+                            ? s('common.done')
+                            : (c.mode == PlayMode.weekly
+                                  ? s('clear.next_knot')
+                                  : s('clear.next')),
+                        onTap: widget.hasNext ? widget.onNext : widget.onLeave,
                       ),
                     ),
                     if (outcome.coins > 0 &&
@@ -212,8 +250,8 @@ class _ClearOverlayState extends State<ClearOverlay>
                       SizedBox(
                         width: double.infinity,
                         child: GhostButton(
-                          label: 'Double coins',
-                          detail: 'watch ad',
+                          label: s('clear.double'),
+                          detail: s('booster.watch'),
                           onTap: () async {
                             services.analytics.log('ad_offered', {
                               'placement': 'double',
@@ -235,7 +273,7 @@ class _ClearOverlayState extends State<ClearOverlay>
                     TextButton(
                       onPressed: widget.onReplay,
                       child: Text(
-                        'Play again',
+                        s('clear.again'),
                         style: AppText.body(p, 14, color: p.dim),
                       ),
                     ),
@@ -260,6 +298,7 @@ class _ClearOverlayState extends State<ClearOverlay>
 
   List<Widget> _collection(
     AppPalette p,
+    S s,
     Services services,
     bool ringEarned,
     List<String> unlocked,
@@ -278,11 +317,11 @@ class _ClearOverlayState extends State<ClearOverlay>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'New skin: ${skin.name}',
+                      s('clear.new_skin', {'name': skin.name}),
                       style: AppText.body(p, 16, weight: FontWeight.w700),
                     ),
                     Text(
-                      'Find it in the Workshop.',
+                      s('clear.find_it'),
                       style: AppText.body(p, 13.5, color: p.dim),
                     ),
                   ],
@@ -291,7 +330,7 @@ class _ClearOverlayState extends State<ClearOverlay>
               if (profile.skin != skin.id)
                 Pill(
                   onTap: () => setState(() => profile.selectSkin(skin.id)),
-                  child: const Text('Wear it'),
+                  child: Text(s('clear.wear')),
                 ),
             ],
           ),
@@ -311,12 +350,15 @@ class _ClearOverlayState extends State<ClearOverlay>
               children: [
                 Expanded(
                   child: Text(
-                    '${collecting.name} set',
+                    s('clear.set', {'name': collecting.name}),
                     style: AppText.body(p, 15, weight: FontWeight.w700),
                   ),
                 ),
                 Text(
-                  '${profile.rings} of ${Economy.ringsPerSet}',
+                  s('clear.of', {
+                    'n': profile.rings,
+                    'total': Economy.ringsPerSet,
+                  }),
                   style: AppText.body(p, 14, color: p.dim),
                 ),
               ],
@@ -326,8 +368,8 @@ class _ClearOverlayState extends State<ClearOverlay>
             const SizedBox(height: 8),
             Text(
               left == 1
-                  ? 'One more ring unlocks the ${collecting.name} skin.'
-                  : '$left more rings unlock the ${collecting.name} skin.',
+                  ? s('clear.one_more', {'name': collecting.name})
+                  : s('clear.more', {'n': left, 'name': collecting.name}),
               style: AppText.body(p, 13.5, color: p.dim),
             ),
           ],

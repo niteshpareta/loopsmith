@@ -4,6 +4,7 @@ import '../game/daily.dart';
 import '../game/economy.dart';
 import '../game/knot.dart';
 import '../game/level.dart';
+import '../l10n/strings.dart';
 import '../render/knot_view.dart';
 import '../render/palette.dart';
 import '../render/scene.dart';
@@ -36,6 +37,8 @@ class _HomeScreenState extends State<HomeScreen> {
         cell: [-1, 0, 0],
         plane: RingPlane.xy,
         turn: 1,
+        tilt: -14,
+        size: 106,
       ),
       RingDef(
         id: 1,
@@ -43,7 +46,9 @@ class _HomeScreenState extends State<HomeScreen> {
         kind: RingKind.plain,
         cell: [0, 0, 0],
         plane: RingPlane.xz,
-        turn: 3,
+        turn: 1,
+        tilt: 16,
+        size: 94,
       ),
       RingDef(
         id: 2,
@@ -52,10 +57,13 @@ class _HomeScreenState extends State<HomeScreen> {
         cell: [1, 0, 0],
         plane: RingPlane.xy,
         turn: 3,
+        tilt: 12,
       ),
     ],
     pegs: const [],
     tray: 4,
+    camYaw: -0.6,
+    camPitch: 0.5,
   );
 
   @override
@@ -74,12 +82,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final services = AppScope.of(context);
     final profile = services.profile;
     return ListenableBuilder(
       listenable: profile,
       builder: (context, _) {
-        _emblem.calm = profile.settings.reduceMotion;
+        _emblem.calm =
+            profile.settings.reduceMotion ||
+            MediaQuery.disableAnimationsOf(context);
         final levels = services.levels;
         final allDone = profile.stars.length >= levels.count;
         final next = profile.unlocked.clamp(1, levels.count);
@@ -93,27 +104,38 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Pill(
-                      label: streak == 1
-                          ? '1 day streak'
-                          : '$streak day streak',
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.local_fire_department_rounded,
-                            size: 17,
-                            color: streak > 0 ? p.brass : p.dim,
+                    // Longer words in other languages shrink to fit rather
+                    // than push the coins off a narrow screen.
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Pill(
+                          label: s.count('count.streak', streak),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.local_fire_department_rounded,
+                                size: 17,
+                                color: streak > 0 ? p.brass : p.dim,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                streak > 0
+                                    ? s('home.day', {'n': streak})
+                                    : s('home.no_streak'),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 5),
-                          Text(streak > 0 ? 'Day $streak' : 'No streak'),
-                        ],
+                        ),
                       ),
                     ),
-                    const Spacer(),
+                    const SizedBox(width: 10),
                     Pill(
-                      label: '${profile.coins} coins',
+                      label: s.count('count.coins', profile.coins),
                       child: Coins(profile.coins),
                     ),
                   ],
@@ -141,7 +163,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 14),
                       if (collecting != null) ...[
                         Text(
-                          '${collecting.name} set · ${profile.rings} of ${Economy.ringsPerSet} rings collected',
+                          s('home.set_progress', {
+                            'name': collecting.name,
+                            'n': profile.rings,
+                            'total': Economy.ringsPerSet,
+                          }),
                           textAlign: TextAlign.center,
                           style: AppText.body(p, 13.5, color: p.dim),
                         ),
@@ -154,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ] else
                         Text(
-                          '${profile.totalStars} stars earned',
+                          s('home.stars_earned', {'n': profile.totalStars}),
                           style: AppText.body(p, 13.5, color: p.dim),
                         ),
                     ],
@@ -163,11 +189,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: BrassButton(
-                    label: allDone ? 'Replay level $next' : 'Play level $next',
+                    label: allDone
+                        ? s('home.replay', {'n': next})
+                        : s('home.play', {'n': next}),
                     detail: allDone
-                        ? 'Every level cleared'
+                        ? s('home.all_cleared')
                         : (Economy.isKnotLevel(next)
-                              ? 'Harder knot · awards a ring'
+                              ? s('home.knot_detail')
                               : null),
                     onTap: () =>
                         Navigator.of(context)
@@ -177,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 16),
                 Pressable(
                   onTap: widget.onOpenDaily,
-                  label: 'Daily Knot',
+                  label: s('daily.title'),
                   child: Panel(
                     child: Row(
                       children: [
@@ -186,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Daily Knot #${dailyNumber(today)}',
+                                s('daily.number', {'n': dailyNumber(today)}),
                                 style: AppText.body(
                                   p,
                                   16,
@@ -195,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                describeLevel(daily),
+                                describeLevel(daily, s),
                                 style: AppText.body(p, 13.5, color: p.dim),
                               ),
                             ],
@@ -211,7 +239,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             borderRadius: BorderRadius.circular(99),
                           ),
                           child: Text(
-                            profile.dailyDoneToday ? 'Done' : 'New',
+                            profile.dailyDoneToday
+                                ? s('common.done')
+                                : s('common.new'),
                             style: AppText.body(
                               p,
                               12.5,
@@ -233,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.of(context).push(LevelsScreen.route());
                   },
                   child: Text(
-                    'All levels',
+                    s('home.all_levels'),
                     style: AppText.body(p, 14, color: p.dim),
                   ),
                 ),

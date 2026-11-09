@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../game/economy.dart';
 import '../game/skins.dart';
+import '../l10n/strings.dart';
 import '../render/palette.dart';
 import '../render/ring_paint.dart';
 import '../services/audio.dart';
 import '../services/services.dart';
+import '../services/store.dart';
 import '../ui/widgets.dart';
 
 /// Skins earned by playing, streaks or coins, and two straightforward
@@ -16,12 +18,20 @@ class WorkshopScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final services = AppScope.of(context);
     return ListenableBuilder(
       listenable: Listenable.merge([services.profile, services.store]),
       builder: (context, _) {
         final profile = services.profile;
         final store = services.store;
+        final error = switch (store.lastError) {
+          null => null,
+          StoreError.unreachable => s('store.unreachable'),
+          StoreError.failed => s('store.failed'),
+          StoreError.notStarted => s('store.not_started'),
+          StoreError.notRestored => s('store.not_restored'),
+        };
         return Narrow(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
@@ -30,18 +40,20 @@ class WorkshopScreen extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Workshop',
+                      s('workshop.title'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: AppText.display(p, 22, weight: FontWeight.w500),
                     ),
                   ),
                   Pill(
-                    label: '${profile.coins} coins',
+                    label: s.count('count.coins', profile.coins),
                     child: Coins(profile.coins),
                   ),
                 ],
               ),
               const SizedBox(height: 16),
-              Text('RING SKINS', style: AppText.label(p)),
+              Text(s('workshop.skins'), style: AppText.label(p)),
               const SizedBox(height: 10),
               GridView(
                 shrinkWrap: true,
@@ -53,10 +65,10 @@ class WorkshopScreen extends StatelessWidget {
                   crossAxisSpacing: 10,
                   mainAxisExtent: 118,
                 ),
-                children: [for (final s in kSkins) _SkinTile(skin: s)],
+                children: [for (final skin in kSkins) _SkinTile(skin: skin)],
               ),
               const SizedBox(height: 22),
-              Text('BOOSTERS', style: AppText.label(p)),
+              Text(s('workshop.boosters'), style: AppText.label(p)),
               const SizedBox(height: 10),
               Panel(
                 child: Row(
@@ -68,18 +80,20 @@ class WorkshopScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${Economy.hintPackSize} hints',
+                            s('workshop.hints', {'n': Economy.hintPackSize}),
                             style: AppText.body(p, 16, weight: FontWeight.w700),
                           ),
                           Text(
-                            'You have ${profile.hints}',
+                            s('workshop.have', {'n': profile.hints}),
                             style: AppText.body(p, 13.5, color: p.dim),
                           ),
                         ],
                       ),
                     ),
                     Pill(
-                      label: 'Buy for ${Economy.hintPackPrice} coins',
+                      label: s('workshop.buy_for', {
+                        'price': s.count('count.coins', Economy.hintPackPrice),
+                      }),
                       onTap: () {
                         if (profile.spendCoins(Economy.hintPackPrice)) {
                           profile.addHints(Economy.hintPackSize);
@@ -87,7 +101,9 @@ class WorkshopScreen extends StatelessWidget {
                         } else {
                           toast(
                             context,
-                            'You need ${Economy.hintPackPrice - profile.coins} more coins.',
+                            s('workshop.need_more', {
+                              'n': Economy.hintPackPrice - profile.coins,
+                            }),
                           );
                         }
                       },
@@ -97,20 +113,22 @@ class WorkshopScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 22),
-              Text('PURCHASES', style: AppText.label(p)),
+              Text(s('workshop.purchases'), style: AppText.label(p)),
               const SizedBox(height: 10),
               _Purchase(
-                title: 'Remove ads',
-                detail: 'No ads between levels. Optional reward ads stay. One-time purchase.',
+                title: s('buy.remove_ads'),
+                detail: s('buy.remove_ads_detail'),
                 owned: profile.adsRemoved,
                 price: store.price(Economy.removeAdsId),
                 onBuy: () => store.buy(Economy.removeAdsId),
               ),
               const SizedBox(height: 10),
               _Purchase(
-                title: 'Starter kit',
-                detail:
-                    '${Economy.starterKitHints} hints, ${Economy.starterKitSlots} extra slots and the Neon skin.',
+                title: s('buy.starter'),
+                detail: s('buy.starter_detail', {
+                  'hints': Economy.starterKitHints,
+                  'slots': Economy.starterKitSlots,
+                }),
                 owned: profile.starterKit,
                 price: store.price(Economy.starterKitId),
                 onBuy: () => store.buy(Economy.starterKitId),
@@ -118,16 +136,13 @@ class WorkshopScreen extends StatelessWidget {
               if (!store.available) ...[
                 const SizedBox(height: 10),
                 Text(
-                  'Purchases are not available on this device.',
+                  s('buy.unavailable'),
                   style: AppText.body(p, 13.5, color: p.dim),
                 ),
               ],
-              if (store.lastError != null) ...[
+              if (error != null) ...[
                 const SizedBox(height: 10),
-                Text(
-                  store.lastError!,
-                  style: AppText.body(p, 13.5, color: p.danger),
-                ),
+                Text(error, style: AppText.body(p, 13.5, color: p.danger)),
               ],
             ],
           ),
@@ -144,6 +159,7 @@ class _SkinTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final services = AppScope.of(context);
     final profile = services.profile;
     final owned = profile.ownedSkins.contains(skin.id);
@@ -151,14 +167,16 @@ class _SkinTile extends StatelessWidget {
     final colors = RingSkin.of(skin.id);
 
     final status = owned
-        ? (selected ? 'Wearing' : 'Owned')
+        ? (selected ? s('skin.wearing') : s('common.owned'))
         : switch (skin.unlock) {
-            SkinUnlock.owned => 'Owned',
-            SkinUnlock.collect =>
-              '${profile.rings} of ${Economy.ringsPerSet} rings',
-            SkinUnlock.level => 'Level ${skin.amount}',
-            SkinUnlock.coins => '${skin.amount} coins',
-            SkinUnlock.streak => '${skin.amount} day streak',
+            SkinUnlock.owned => s('common.owned'),
+            SkinUnlock.collect => s('skin.rings', {
+              'n': profile.rings,
+              'total': Economy.ringsPerSet,
+            }),
+            SkinUnlock.level => s('skin.level', {'n': skin.amount}),
+            SkinUnlock.coins => s.count('count.coins', skin.amount),
+            SkinUnlock.streak => s.count('count.streak', skin.amount),
           };
 
     void onTap() {
@@ -171,7 +189,10 @@ class _SkinTile extends StatelessWidget {
           if (profile.coins < skin.amount) {
             toast(
               context,
-              'You need ${skin.amount - profile.coins} more coins for ${skin.name}.',
+              s('skin.need', {
+                'n': skin.amount - profile.coins,
+                'name': skin.name,
+              }),
             );
           } else {
             showCardDialog<void>(
@@ -181,12 +202,13 @@ class _SkinTile extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Buy ${skin.name}?',
+                      s('skin.buy_question', {'name': skin.name}),
+                      textAlign: TextAlign.center,
                       style: AppText.display(p, 20, weight: FontWeight.w500),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'This costs ${skin.amount} coins. You have ${profile.coins}.',
+                      s('skin.cost', {'n': skin.amount, 'have': profile.coins}),
                       textAlign: TextAlign.center,
                       style: AppText.body(p, 14.5, color: p.dim),
                     ),
@@ -195,7 +217,7 @@ class _SkinTile extends StatelessWidget {
                       width: double.infinity,
                       child: BrassButton(
                         compact: true,
-                        label: 'Buy for ${skin.amount} coins',
+                        label: s('skin.buy', {'n': skin.amount}),
                         onTap: () {
                           if (profile.buySkin(skin)) {
                             services.audio.play(Sfx.unlock);
@@ -207,7 +229,7 @@ class _SkinTile extends StatelessWidget {
                     TextButton(
                       onPressed: () => Navigator.of(dialog).pop(),
                       child: Text(
-                        'Keep my coins',
+                        s('skin.keep'),
                         style: AppText.body(p, 14, color: p.dim),
                       ),
                     ),
@@ -217,13 +239,16 @@ class _SkinTile extends StatelessWidget {
             );
           }
         case SkinUnlock.collect:
-          toast(context, 'Clear knot levels and Daily Knots to collect rings.');
+          toast(context, s('skin.how_collect'));
         case SkinUnlock.level:
-          toast(context, 'Clear level ${skin.amount} to unlock ${skin.name}.');
+          toast(
+            context,
+            s('skin.how_level', {'n': skin.amount, 'name': skin.name}),
+          );
         case SkinUnlock.streak:
           toast(
             context,
-            'Reach a ${skin.amount} day streak to unlock ${skin.name}.',
+            s('skin.how_streak', {'n': skin.amount, 'name': skin.name}),
           );
         case SkinUnlock.owned:
           break;
@@ -232,7 +257,7 @@ class _SkinTile extends StatelessWidget {
 
     return Pressable(
       onTap: onTap,
-      label: '${skin.name} skin, $status',
+      label: s('skin.label', {'name': skin.name, 'status': status}),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         decoration: BoxDecoration(
@@ -245,7 +270,7 @@ class _SkinTile extends StatelessWidget {
         ),
         alignment: Alignment.center,
         // Scale the tile's contents down rather than clip them when the
-        // player uses very large text.
+        // text is long or the player uses very large text.
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Column(
@@ -320,6 +345,7 @@ class _Purchase extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     return Panel(
       child: Row(
         children: [
@@ -339,7 +365,7 @@ class _Purchase extends StatelessWidget {
           const SizedBox(width: 10),
           if (owned)
             Text(
-              'Owned',
+              s('common.owned'),
               style: AppText.body(
                 p,
                 14,
@@ -349,7 +375,9 @@ class _Purchase extends StatelessWidget {
             )
           else
             Pill(
-              label: price == null ? 'Unavailable' : 'Buy for $price',
+              label: price == null
+                  ? s('workshop.unavailable')
+                  : s('workshop.buy_for', {'price': price}),
               onTap: price == null ? null : onBuy,
               child: Text(price ?? '—'),
             ),

@@ -1,10 +1,12 @@
-/// Builds levels that are guaranteed to be solvable, and rates how hard they are.
+/// Builds levels that are guaranteed to be solvable, rates how hard they are,
+/// and checks that every ring can be seen and tapped.
 library;
 
 import 'dart:math';
 
 import 'geometry.dart';
 import 'level.dart';
+import 'projection.dart';
 import 'solver.dart';
 
 class GenSpec {
@@ -39,6 +41,13 @@ class GenSpec {
   final int candidates;
 }
 
+/// The most rings a knot may have. Larger knots were hard to read on a phone.
+const int kMaxKnotRings = 9;
+
+/// A view scoring at least this lets a slightly-off tap land on the intended
+/// ring for every ring in the knot.
+const double kGoodView = 0.9;
+
 class _Candidate {
   _Candidate(this.level, this.failRate, this.score);
   final LevelDef level;
@@ -49,21 +58,34 @@ class _Candidate {
 /// Generates the level described by [spec]. The same spec and [seed] always
 /// produce the same level.
 LevelDef generateLevel(GenSpec spec, int seed) {
-  _Candidate? best;
+  final found = <_Candidate>[];
   var attempt = 0;
-  var found = 0;
-  while (found < spec.candidates && attempt < spec.candidates * 40) {
+  while (found.length < spec.candidates && attempt < spec.candidates * 40) {
     final rng = Random(seed * 7919 + attempt * 104729 + 13);
     attempt++;
     final c = _tryBuild(spec, rng, relaxed: attempt > spec.candidates * 20);
-    if (c == null) continue;
-    found++;
-    if (best == null || c.score < best.score) best = c;
+    if (c != null) found.add(c);
   }
-  if (best == null) {
+  if (found.isEmpty) {
     throw StateError('could not generate level ${spec.id}');
   }
-  return best.level;
+  found.sort((a, b) => a.score.compareTo(b.score));
+
+  // Of the candidates closest to the wanted difficulty, keep the first whose
+  // best view is clear. If none is, keep the clearest.
+  LevelDef? fallback;
+  var fallbackView = -1.0;
+  for (final c in found.take(4)) {
+    final frames = [for (final r in c.level.rings) RingFrame(r)];
+    final view = bestView(frames);
+    final level = c.level.withCamera(view[0], view[1]);
+    if (view[2] >= kGoodView) return level;
+    if (view[2] > fallbackView) {
+      fallbackView = view[2];
+      fallback = level;
+    }
+  }
+  return fallback!;
 }
 
 _Candidate? _tryBuild(GenSpec spec, Random rng, {required bool relaxed}) {
@@ -108,24 +130,18 @@ _Candidate? _tryBuild(GenSpec spec, Random rng, {required bool relaxed}) {
     partner[a] = keys[rng.nextInt(keys.length)];
   }
 
+  // Lean, size and frame shape: looks only, checked so nothing collides.
+  final shaped = _decorate(layout, kinds, partner, rng);
+  if (shaped == null) return null;
+
   // Starting orientations: nothing may be free before the first move.
   List<RingDef>? rings;
-  late LevelDef bare;
   late Solver solver;
   for (var tries = 0; tries < 40 && rings == null; tries++) {
     final candidate = [
-      for (var i = 0; i < n; i++)
-        RingDef(
-          id: i,
-          color: 0,
-          kind: kinds[i],
-          cell: layout[i].cell,
-          plane: layout[i].plane,
-          turn: rng.nextInt(4),
-          partner: partner[i],
-        ),
+      for (final r in shaped) r.copyWith(turn: rng.nextInt(4)),
     ];
-    bare = LevelDef(
+    final bare = LevelDef(
       id: spec.id,
       rings: candidate,
       pegs: const [],
@@ -153,6 +169,10 @@ _Candidate? _tryBuild(GenSpec spec, Random rng, {required bool relaxed}) {
     final res = Solver(level)
         .solveFrom(solver.initialTurns(), 0, spec.tray, allowGreedy: false);
     if (!res.solved) return null;
+    // The very first level must be cleared by a single tap.
+    if (spec.id == 1 && (res.moves.length != 1 || res.moves.first.delta != 1)) {
+      return null;
+    }
     final par = res.moves.length;
     final wanted = max(1, n - 1);
     return _Candidate(
@@ -222,7 +242,7 @@ _Candidate? _tryBuild(GenSpec spec, Random rng, {required bool relaxed}) {
       ? (parLow - par) * 0.06
       : (par > parHigh ? (par - parHigh) * 0.06 : 0.0);
   final score = (failRate - spec.targetFail).abs() + parPenalty;
-  final rating = (0.55 * failRate + 0.45 * ((par - 2) / 14).clamp(0.0, 1.0))
+  final rating = (0.55 * failRate + 0.45 * ((par - 2) / 12).clamp(0.0, 1.0))
       .clamp(0.0, 1.0);
 
   return _Candidate(
@@ -335,6 +355,122 @@ _Relation _relation(_Placed a, _Placed b) {
   return a.plane == b.plane ? _Relation.overlap : _Relation.linked;
 }
 
+/// Gives each ring a lean, a size and (for fixed frames) a shape, so knots
+/// look hand-made instead of gridded. None of this changes the rules: a ring
+/// only leans about the axis through its own link points, so every hook stays
+/// exactly where it was. The result is checked for collisions.
+List<RingDef>? _decorate(
+  List<_Placed> layout,
+  List<RingKind> kinds,
+  List<int> partner,
+  Random rng,
+) {
+  final n = layout.length;
+  // Which axis each ring may lean about (-1: it must stay upright).
+  final leanAxis = List.filled(n, -1);
+  List<RingDef> build(List<int> tilt, List<int> size, List<RingShape> shape) {
+    return [
+      for (var i = 0; i < n; i++)
+        RingDef(
+          id: i,
+          color: 0,
+          kind: kinds[i],
+          cell: layout[i].cell,
+          plane: layout[i].plane,
+          turn: 0,
+          partner: partner[i],
+          tilt: tilt[i],
+          tiltAxis: leanAxis[i] < 0 ? 0 : leanAxis[i],
+          size: size[i],
+          shape: shape[i],
+        ),
+    ];
+  }
+
+  // Only rings whose links all sit on one axis can lean without moving a
+  // hook, and they lean about that axis.
+  final plain = build(
+    List.filled(n, 0),
+    List.filled(n, 100),
+    List.filled(n, RingShape.round),
+  );
+  final links = computeLinks(plain);
+  for (var i = 0; i < n; i++) {
+    var onU = false, onV = false;
+    for (final l in links) {
+      final pos = l.a == i ? l.pa : (l.b == i ? l.pb : -1);
+      if (pos < 0) continue;
+      if (pos.isEven) {
+        onU = true;
+      } else {
+        onV = true;
+      }
+    }
+    if (onU && !onV) leanAxis[i] = 0;
+    if (onV && !onU) leanAxis[i] = 1;
+  }
+
+  const sizes = [88, 94, 100, 100, 106];
+  const frameShapes = [RingShape.square, RingShape.triangle, RingShape.dee];
+  var lean = 1.0;
+  for (var tries = 0; tries < 8; tries++) {
+    final tilt = List.filled(n, 0);
+    final size = List.filled(n, 100);
+    final shape = List.filled(n, RingShape.round);
+    for (var i = 0; i < n; i++) {
+      if (kinds[i] == RingKind.fixed) {
+        shape[i] = frameShapes[rng.nextInt(frameShapes.length)];
+      } else {
+        size[i] = sizes[rng.nextInt(sizes.length)];
+      }
+      if (leanAxis[i] >= 0 && rng.nextDouble() < 0.75) {
+        final degrees = ((12 + rng.nextDouble() * 22) * lean).round();
+        tilt[i] = rng.nextBool() ? degrees : -degrees;
+      }
+    }
+    final rings = build(tilt, size, shape);
+    if (geometryProblem(rings) == null) return rings;
+    lean *= 0.72;
+  }
+  // Fall back to the plain, upright knot with square frames.
+  final rings = build(List.filled(n, 0), List.filled(n, 100), [
+    for (var i = 0; i < n; i++)
+      kinds[i] == RingKind.fixed ? RingShape.square : RingShape.round,
+  ]);
+  return geometryProblem(rings) == null ? rings : null;
+}
+
+/// Describes the first way a knot's shapes do not fit together, or returns
+/// null when every hooked pair really hooks and nothing else touches.
+String? geometryProblem(List<RingDef> rings) {
+  final frames = [for (final r in rings) RingFrame(r)];
+  final links = computeLinks(rings);
+  final linked = <int, LinkDef>{for (final l in links) l.a * 64 + l.b: l};
+  for (var i = 0; i < rings.length; i++) {
+    for (var j = i + 1; j < rings.length; j++) {
+      final a = frames[i], b = frames[j];
+      final link = linked[i * 64 + j];
+      if (link != null) {
+        if (linkSeparation(a, link.pa, b, link.pb) < 0.3) {
+          return 'rings $i and $j touch where they hook';
+        }
+        if (!ringPierces(a, b) || !ringPierces(b, a)) {
+          return 'rings $i and $j no longer hook';
+        }
+        if (ringClearance(a, b) < 0.26) {
+          return 'rings $i and $j rub together';
+        }
+      } else {
+        if (ringClearance(a, b) < 0.42) return 'rings $i and $j collide';
+        if (ringPierces(a, b) || ringPierces(b, a)) {
+          return 'rings $i and $j hook without a link';
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /// Plays the knot with no pegs, mostly choosing moves that free something,
 /// and returns the order rings came out in.
 List<int>? _referenceOrder(Solver s, Random rng) {
@@ -424,24 +560,24 @@ GenSpec campaignSpec(int id) {
     rings = 3;
   } else if (id <= 7) {
     rings = 4;
-  } else if (id <= 10) {
-    rings = 5;
   } else if (id <= 14) {
-    rings = 5 + (id.isEven ? 1 : 0);
+    rings = 5;
   } else if (id <= 24) {
-    rings = 6 + (id % 3 == 0 ? 1 : 0);
-  } else if (id <= 39) {
-    rings = 7 + (id % 3 == 0 ? 1 : 0);
+    rings = 6;
   } else if (id <= 59) {
-    rings = 8 + (id % 3 == 0 ? 1 : 0);
-  } else if (id <= 119) {
-    rings = 9 + (id % 3 == 0 ? 1 : 0);
+    rings = 6 + (id % 3 == 0 ? 1 : 0);
+  } else if (id <= 149) {
+    rings = 7 + (id % 3 == 0 ? 1 : 0);
   } else {
-    rings = 10 + (id % 3 == 0 ? 1 : 0);
+    rings = 8;
   }
-  if (knot) rings = min(kMaxRings, rings + 1);
+  if (knot) rings = min(kMaxKnotRings, rings + 1);
 
-  final pegs = id < 5 ? 0 : (rings >= 9 && id % 3 != 1 ? 3 : 2);
+  final pegs = id < 5 ? 0 : (rings >= 8 && id % 3 != 1 ? 3 : 2);
+
+  // Late knots have a tighter tray, which is where their challenge comes
+  // from now that knots stay small enough to read.
+  final tray = knot && id >= 120 ? 3 : 4;
 
   // Each ring type gets a gentle first level, then appears regularly.
   var twins = 0, gears = 0, fixed = 0, sealed = 0;
@@ -494,9 +630,9 @@ GenSpec campaignSpec(int id) {
   }
 
   double target;
-  if (id <= 10) {
+  if (id <= 14) {
     target = 0.0;
-  } else if (id <= 20) {
+  } else if (id <= 24) {
     target = 0.15;
   } else if (id <= 60) {
     target = 0.3;
@@ -513,7 +649,7 @@ GenSpec campaignSpec(int id) {
     id: id,
     rings: rings,
     pegs: pegs,
-    tray: 4,
+    tray: tray,
     twins: twins,
     gearPairs: gears,
     fixed: fixed,
@@ -522,12 +658,11 @@ GenSpec campaignSpec(int id) {
   );
 }
 
-/// Daily knots are larger and use every ring type.
+/// Daily knots are full-size and use every ring type.
 GenSpec dailySpec(int index) {
-  final rings = 9 + index % 3;
   return GenSpec(
     id: index,
-    rings: rings,
+    rings: 8 + index % 2,
     pegs: index % 2 == 0 ? 3 : 2,
     tray: 4,
     twins: 1,
@@ -535,5 +670,22 @@ GenSpec dailySpec(int index) {
     fixed: index % 4 == 1 ? 1 : 0,
     sealed: index % 4 == 3 ? 1 : 0,
     targetFail: 0.5,
+  );
+}
+
+/// Weekly-run knots: seven a week, from gentle on Monday's first knot to
+/// hard on the seventh.
+GenSpec weeklySpec(int index) {
+  final step = index % 7;
+  return GenSpec(
+    id: index,
+    rings: 6 + (step + 1) ~/ 2,
+    pegs: step >= 5 ? 3 : 2,
+    tray: step == 6 ? 3 : 4,
+    twins: step.isOdd ? 1 : 0,
+    gearPairs: step == 2 || step == 5 ? 1 : 0,
+    fixed: step == 3 || step == 6 ? 1 : 0,
+    sealed: step == 4 ? 1 : 0,
+    targetFail: 0.25 + step * 0.06,
   );
 }

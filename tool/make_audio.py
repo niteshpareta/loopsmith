@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Synthesises every sound in assets/audio.
+"""Builds every sound in assets/audio.
+
+Short physical sounds (ring ticks, knocks, button taps) are recordings from
+Kenney's Interface Sounds pack (CC0, www.kenney.nl), kept in tool/cc0. Pitched
+sounds and the music are synthesised here so they all share one key.
 
     pip install numpy scipy lameenc
     python3 tool/make_audio.py
@@ -217,6 +221,46 @@ def metal_tick(seed):
     return click * 0.5 + ping * 0.6 + body
 
 
+# ---------------------------------------------------------------- recordings
+CC0 = os.path.join(os.path.dirname(__file__), "cc0", "kenney_interface")
+
+# output name: (recording, peak in dBFS, pitch ratio)
+RECORDED = {
+    "turn_1.wav": ("tick_001.wav", -9, 1.0),
+    "turn_2.wav": ("tick_002.wav", -9, 1.0),
+    "turn_3.wav": ("click_005.wav", -10, 1.0),
+    # drop_003 rings at about 739 Hz; nudged up to G5 so it sits in key.
+    "peg.wav": ("drop_003.wav", -8, 783.99 / 739.0),
+    "tray.wav": ("drop_002.wav", -7, 0.9),
+    "tap.wav": ("select_002.wav", -13, 1.0),
+    "blocked.wav": ("back_002.wav", -11, 0.85),
+    "undo.wav": ("back_004.wav", -12, 1.0),
+}
+
+
+def read_wav(path):
+    with wave.open(path, "rb") as w:
+        assert w.getsampwidth() == 2 and w.getframerate() == SR, path
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32768
+        if w.getnchannels() == 2:
+            x = x.reshape(-1, 2).mean(axis=1)
+    return x
+
+
+def repitch(x, ratio):
+    """Plays a sound faster (ratio > 1) or slower, like a tape."""
+    if ratio == 1.0:
+        return x
+    n = int(len(x) / ratio)
+    return np.interp(np.arange(n) * ratio, np.arange(len(x)), x)
+
+
+def import_recorded():
+    for name, (source, peak_db, ratio) in RECORDED.items():
+        x = repitch(read_wav(os.path.join(CC0, source)), ratio)
+        write_wav(name, x, peak_db)
+
+
 # ---------------------------------------------------------------- effects
 def make_sfx():
     for i in range(3):
@@ -394,5 +438,6 @@ if __name__ == "__main__":
     os.makedirs(os.path.join(OUT, "sfx"), exist_ok=True)
     os.makedirs(os.path.join(OUT, "music"), exist_ok=True)
     make_sfx()
+    import_recorded()  # replaces the synthesised ticks, knocks and taps
     lengths = [make_pad(), make_mallets(), make_shimmer()]
     print("loop lengths (seconds):", lengths, "margin:", LOOP_MARGIN)

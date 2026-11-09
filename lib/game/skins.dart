@@ -3,6 +3,21 @@ library;
 
 enum SkinUnlock { owned, collect, level, coins, streak }
 
+/// What a skin's rings look like they are made of.
+enum Finish {
+  /// Glossy painted enamel: clear colour with a sharp highlight.
+  gloss,
+
+  /// Polished metal: reflects a bright sky and a dark horizon.
+  metal,
+
+  /// Soft, matte stone.
+  stone,
+
+  /// Lit from within.
+  neon,
+}
+
 class SkinDef {
   const SkinDef({
     required this.id,
@@ -12,6 +27,7 @@ class SkinDef {
     this.amount = 0,
     this.gloss = 0.6,
     this.glow = 0.0,
+    this.finish = Finish.gloss,
   });
 
   final String id;
@@ -29,6 +45,7 @@ class SkinDef {
 
   /// 0 none to 1 strong neon glow.
   final double glow;
+  final Finish finish;
 }
 
 const List<SkinDef> kSkins = [
@@ -51,6 +68,7 @@ const List<SkinDef> kSkins = [
     name: 'Brass',
     unlock: SkinUnlock.collect,
     gloss: 1.0,
+    finish: Finish.metal,
     colors: [
       0xFF4FA890,
       0xFFD8A63C,
@@ -66,6 +84,7 @@ const List<SkinDef> kSkins = [
     unlock: SkinUnlock.level,
     amount: 80,
     gloss: 0.25,
+    finish: Finish.stone,
     colors: [
       0xFF5FB89A,
       0xFFD9C27A,
@@ -82,6 +101,7 @@ const List<SkinDef> kSkins = [
     amount: 900,
     gloss: 0.8,
     glow: 1.0,
+    finish: Finish.neon,
     colors: [
       0xFF2FFFD5,
       0xFFFFD23F,
@@ -97,6 +117,7 @@ const List<SkinDef> kSkins = [
     unlock: SkinUnlock.streak,
     amount: 30,
     gloss: 1.0,
+    finish: Finish.metal,
     colors: [
       0xFFA3E0D5,
       0xFFEFD79A,

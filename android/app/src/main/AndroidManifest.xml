@@ -1,7 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Needed by ads and in-app purchases. The game itself plays offline. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Daily reminder: lets a planned reminder survive a phone restart. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- allowBackup lets Android's automatic backup save and restore the
+         player's progress when they reinstall or change phones. -->
     <application
+        android:allowBackup="true"
         android:label="Loopsmith"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
@@ -28,6 +33,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Daily reminder (flutter_local_notifications). -->
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
         <!-- AdMob app id. This is Google's public TEST id: replace it with your
              own from the AdMob console before release. Without this entry
              the app closes at launch. -->

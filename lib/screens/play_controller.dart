@@ -7,12 +7,14 @@ import '../game/economy.dart';
 import '../game/knot.dart';
 import '../game/level.dart';
 import '../game/solver.dart';
+import '../l10n/strings.dart';
 import '../render/scene.dart';
 import '../services/audio.dart';
 import '../services/profile.dart';
+import '../services/reminders.dart';
 import '../services/services.dart';
 
-enum PlayMode { campaign, daily }
+enum PlayMode { campaign, daily, weekly }
 
 enum PlayPhase {
   playing,
@@ -77,6 +79,7 @@ class PlayController extends ChangeNotifier {
     required this.mode,
     required this.scene,
     this.dailyNumber = 0,
+    this.weeklyIndex = 0,
   });
 
   final Services services;
@@ -84,7 +87,13 @@ class PlayController extends ChangeNotifier {
   final PlayMode mode;
   final KnotScene scene;
   final int dailyNumber;
+
+  /// Which of the week's seven knots this is (0..6), in weekly mode.
+  final int weeklyIndex;
   PlayHost? host;
+
+  /// The player's language, set by the screen. English until then.
+  S strings = S.english;
 
   late Knot knot;
   PlayPhase phase = PlayPhase.playing;
@@ -121,8 +130,11 @@ class PlayController extends ChangeNotifier {
   PlayerProfile get _profile => services.profile;
   bool get _firstLevel => mode == PlayMode.campaign && level.id == 1;
 
-  String get title =>
-      mode == PlayMode.daily ? 'Daily Knot #$dailyNumber' : 'Level ${level.id}';
+  String get title => switch (mode) {
+    PlayMode.campaign => strings('play.level', {'n': level.id}),
+    PlayMode.daily => strings('daily.number', {'n': dailyNumber}),
+    PlayMode.weekly => strings('weekly.knot', {'n': weeklyIndex + 1}),
+  };
   bool get canUndo =>
       _history.isNotEmpty &&
       (phase == PlayPhase.playing || phase == PlayPhase.failed);
@@ -134,11 +146,17 @@ class PlayController extends ChangeNotifier {
 
   /// How the extra slot will be paid for, in the order the game prefers.
   String get slotCost {
-    if (slotAdded) return 'used';
-    if (_profile.slotTokens > 0) return '${_profile.slotTokens} left';
-    if (services.ads.rewardedReady) return 'watch ad';
-    return '${Economy.slotPrice} coins';
+    if (slotAdded) return strings('booster.used');
+    if (_profile.slotTokens > 0) {
+      return strings('booster.left', {'n': _profile.slotTokens});
+    }
+    if (services.ads.rewardedReady) return strings('booster.watch');
+    return strings.count('count.coins', Economy.slotPrice);
   }
+
+  String get undoCost => undoIsFree
+      ? strings('booster.free')
+      : strings.count('count.coins', Economy.undoPrice);
 
   void start() {
     _cancelPending();
@@ -179,26 +197,25 @@ class PlayController extends ChangeNotifier {
     if (mode == PlayMode.campaign) {
       switch (level.id) {
         case 1:
-          return 'Turn the glowing ring until its opening reaches the dot. Tap to turn, or drag to spin.';
+          return strings('tip.first');
         case 2:
-          return 'A ring slips out when its opening, or its neighbour\'s, sits where they hook together.';
+          return strings('tip.hook');
         case 3:
-          return 'Drag the background to look around the knot.';
+          return strings('tip.look');
         case 5:
-          return 'Freed rings go onto the pegs in the order shown. Others wait in the tray. Don\'t let the tray fill up.';
+          return strings('tip.pegs');
       }
     }
     const kindTips = {
-      RingKind.twin: 'Twin rings have two openings, one on each side.',
-      RingKind.geared: 'Notched rings are geared. Turn one and its partner turns the other way.',
-      RingKind.fixed:
-          'Square frames cannot turn. Bring another ring\'s opening to them.',
-      RingKind.sealed: 'A banded ring has no opening until the ring matching its dot is freed.',
+      RingKind.twin: 'tip.twin',
+      RingKind.geared: 'tip.geared',
+      RingKind.fixed: 'tip.fixed',
+      RingKind.sealed: 'tip.sealed',
     };
     for (final entry in kindTips.entries) {
       if (level.kinds.contains(entry.key) &&
           _profile.firstTime('kind.${entry.key.name}')) {
-        return entry.value;
+        return strings(entry.value);
       }
     }
     return null;
@@ -222,10 +239,10 @@ class PlayController extends ChangeNotifier {
     services.audio.play(Sfx.blocked);
     final d = level.rings[ring];
     if (d.kind == RingKind.fixed) {
-      _say('Square frames cannot turn. Bring another ring\'s opening to them.');
+      _say(strings('notice.fixed'));
     } else if (knot.isSealed(ring)) {
       scene.highlight(d.partner);
-      _say('This ring is sealed until the glowing ring is freed.');
+      _say(strings('notice.sealed'));
     }
   }
 
@@ -443,20 +460,41 @@ class PlayController extends ChangeNotifier {
     if (phase == PlayPhase.cleared) return;
     phase = PlayPhase.cleared;
     _watch.stop();
-    outcome = mode == PlayMode.campaign
-        ? _profile.completeLevel(
-            level.id,
-            knot.moves,
-            level.par,
-            levelCount: services.levels.count,
-          )
-        : _profile.completeDaily(knot.moves, level.par);
+    outcome = switch (mode) {
+      PlayMode.campaign => _profile.completeLevel(
+        level.id,
+        knot.moves,
+        level.par,
+        levelCount: services.levels.count,
+      ),
+      PlayMode.daily => _profile.completeDaily(knot.moves, level.par),
+      PlayMode.weekly => _profile.completeWeekly(
+        weeklyIndex,
+        knot.moves,
+        level.par,
+      ),
+    };
+    if (mode == PlayMode.daily && _profile.settings.reminder) {
+      // Today's knot is done, so tonight's reminder is no longer needed.
+      services.reminders.refresh(
+        ReminderText(
+          strings('remind.title'),
+          strings('remind.body'),
+          strings('remind.channel'),
+        ),
+        playedToday: true,
+      );
+    }
     services.audio
       ..duck(const Duration(milliseconds: 2600))
       ..play(Sfx.win);
     services.haptics.success();
     services.analytics.log(
-      mode == PlayMode.daily ? 'daily_done' : 'level_clear',
+      switch (mode) {
+        PlayMode.campaign => 'level_clear',
+        PlayMode.daily => 'daily_done',
+        PlayMode.weekly => 'weekly_done',
+      },
       {
         'level': level.id,
         'moves': knot.moves,
@@ -489,7 +527,7 @@ class PlayController extends ChangeNotifier {
     if (freeUndos > 0) {
       freeUndos--;
     } else if (!_profile.spendCoins(Economy.undoPrice)) {
-      _say('Not enough coins for another undo.');
+      _say(strings('notice.undo_coins'));
       return false;
     }
     _cancelPending();
@@ -533,7 +571,7 @@ class PlayController extends ChangeNotifier {
       } else if (_profile.spendCoins(Economy.slotPrice)) {
         paid = 'coins';
       } else {
-        _say('Not enough coins for an extra slot.');
+        _say(strings('notice.slot_coins'));
         return false;
       }
     }
@@ -579,7 +617,7 @@ class PlayController extends ChangeNotifier {
       return HintOutcome.ignored;
     }
     if (answer[0] < 0) {
-      _say('No way through from here. Undo your last move or restart.');
+      _say(strings('notice.no_way'));
       return HintOutcome.noSolution;
     }
     _profile.useHint();
@@ -600,7 +638,7 @@ class PlayController extends ChangeNotifier {
     scene.setHint(move.ring, (knot.turns[move.ring] + move.delta) & 3);
     if (!silent) {
       services.audio.play(Sfx.hint);
-      tip = 'Turn the glowing ring until its opening reaches the dot.';
+      tip = strings('tip.hint');
     }
     notifyListeners();
   }

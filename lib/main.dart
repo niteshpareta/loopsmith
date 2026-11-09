@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app.dart';
+import 'l10n/strings.dart';
 import 'render/palette.dart';
 import 'services/services.dart';
 import 'ui/widgets.dart';
@@ -45,7 +46,7 @@ class _BootState extends State<Boot> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              'Loopsmith could not start',
+                              S.english('boot.failed_title'),
                               textAlign: TextAlign.center,
                               style: AppText.display(
                                 p,
@@ -55,7 +56,7 @@ class _BootState extends State<Boot> {
                             ),
                             const SizedBox(height: 10),
                             Text(
-                              'Its files could not be read. Try again.',
+                              S.english('boot.failed_body'),
                               textAlign: TextAlign.center,
                               style: AppText.body(p, 15, color: p.dim),
                             ),
@@ -63,7 +64,7 @@ class _BootState extends State<Boot> {
                             FilledButton(
                               onPressed: () =>
                                   setState(() => _start = Services.start()),
-                              child: const Text('Try again'),
+                              child: Text(S.english('common.try_again')),
                             ),
                           ],
                         ),

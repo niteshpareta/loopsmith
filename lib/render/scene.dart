@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../game/geometry.dart';
 import '../game/knot.dart';
 import '../game/level.dart';
+import '../game/projection.dart';
 import 'camera.dart';
 
 /// How one ring looks right now: where its opening is, and any animation
@@ -45,54 +46,98 @@ class RingVisual {
   double get angle => spin + drag;
 }
 
-/// One short piece of a ring's tube, projected to the screen.
-class Seg {
-  Seg(
-    this.ring,
-    this.index,
-    this.a,
-    this.b,
-    this.z,
-    this.width,
-    this.light,
+/// One cross-section of a ring's tube, ready to be lit and drawn.
+class Station {
+  Station(
     this.theta,
-    this.alpha,
+    this.screen,
+    this.z,
+    this.lateral,
+    this.along,
+    this.side,
+    this.front,
+    this.tangent,
+    this.eye,
   );
-  final int ring;
-  final int index;
-  final Offset a;
-  final Offset b;
-  final double z;
-  final double width;
-  final double light;
-  final double theta;
-  final double alpha;
 
-  /// 0 none, 1 seal dot, 2 colour mark, 3 gear notch, 4 rivet.
-  int deco = 0;
+  /// Local angle around the ring.
+  final double theta;
+
+  /// Centre of the tube on screen, and its depth.
+  final Offset screen;
+  final double z;
+
+  /// Screen offset from the centre to the tube's edge, and one tube radius
+  /// along the tube.
+  final Offset lateral;
+  final Offset along;
+
+  /// View-space unit vectors: across the tube, toward the viewer, along the
+  /// tube, and from this point to the eye.
+  final Vec3 side;
+  final Vec3 front;
+  final Vec3 tangent;
+  final Vec3 eye;
 
   /// Part of the band covering a sealed ring's opening.
   bool band = false;
 
-  /// This segment starts or ends at an opening, so that end is rounded.
-  bool capA = false;
-  bool capB = false;
+  /// A groove on a geared ring.
+  bool rib = false;
+
+  /// Index of this station's first vertex, set while the mesh is built.
+  int base = 0;
 }
 
-/// A ring's outline on screen, kept for hit testing and glows.
+/// An unbroken stretch of tube: a whole ring, or one arc between openings.
+class TubeRun {
+  TubeRun(this.ring, this.alpha, this.releasing, this.capped);
+  final int ring;
+  final double alpha;
+  final bool releasing;
+
+  /// The run ends at openings, so both ends are rounded off.
+  final bool capped;
+
+  /// Position around the ring of this run's first piece of tube.
+  int firstIndex = 0;
+  final List<Station> stations = [];
+}
+
+/// The piece of tube between two neighbouring stations.
+class TubeSeg {
+  TubeSeg(this.run, this.i, this.index, this.z);
+  final TubeRun run;
+
+  /// Joins `run.stations[i]` to `run.stations[i + 1]`.
+  final int i;
+
+  /// Position around the whole ring, across all its runs.
+  final int index;
+  final double z;
+
+  /// 0 none, 1 seal dot, 2 colour mark, 4 rivet.
+  int deco = 0;
+}
+
+/// What the painter and the touch code need to know about a ring on screen.
 class RingOutline {
   RingOutline(this.ring, this.center, this.tube);
   final int ring;
   final Offset center;
+
+  /// Width of the tube in pixels.
   final double tube;
   final List<Offset> points = [];
   final List<double> thetas = [];
-  final List<double> depths = [];
 }
 
 class FrameData {
-  final List<Seg> segs = [];
+  final List<TubeRun> runs = [];
+  final List<TubeSeg> segs = [];
   final Map<int, RingOutline> outlines = {};
+  final List<RingTrace> traces = [];
+  int stationCount = 0;
   double zNear = 0, zFar = 1;
 }
 
@@ -149,6 +194,10 @@ class KnotScene extends ChangeNotifier {
   /// Reduce motion: no idle sway, no particles, instant camera moves.
   bool calm = false;
 
+  /// Height at the top of the view covered by something else (a coaching
+  /// tip); the knot is fitted into what is left.
+  double topInset = 0;
+
   final List<LinkGlow> glows = [];
   final List<Flash> flashes = [];
   final List<Particle> particles = [];
@@ -166,10 +215,13 @@ class KnotScene extends ChangeNotifier {
 
   static const double spinTime = 0.2;
   static const double releaseTime = 0.24;
-  static const Vec3 _light = Vec3(-0.42, 0.72, -0.55);
 
   /// Shows [knot] as it is, optionally popping the rings in one by one.
   void load(LevelDef level, Knot knot, {bool animate = false}) {
+    final sameLevel =
+        rings.length == level.rings.length &&
+        rings.isNotEmpty &&
+        identical(rings.first.def, level.rings.first);
     rings = [for (final r in level.rings) RingVisual(r)];
     for (var i = 0; i < rings.length; i++) {
       final rv = rings[i];
@@ -180,13 +232,19 @@ class KnotScene extends ChangeNotifier {
     }
     var low = double.infinity;
     for (final rv in rings) {
-      low = math.min(low, rv.frame.center.y - 1);
+      low = math.min(low, rv.frame.center.y - rv.frame.radius);
     }
     groundY = (low.isFinite ? low : -1) - 0.75;
     flashes.clear();
     particles.clear();
     hintRing = -1;
     syncGlows(knot);
+    // Start from the view the generator found clearest. An undo keeps
+    // whatever view the player has turned to.
+    if (!sameLevel || animate) {
+      _yaw = level.camYaw;
+      _pitch = level.camPitch;
+    }
     _snap = true;
     notifyListeners();
   }
@@ -317,7 +375,7 @@ class KnotScene extends ChangeNotifier {
     rv.gone = true;
     if (outline == null) return null;
     final lift = _lift(rv);
-    final scale = 1 + 0.12 * _releaseT(rv);
+    final scale = (1 + 0.12 * _releaseT(rv)) * rv.frame.radius;
     final c = rv.frame.center + lift;
     final pc = camera.projectWorld(c);
     final pu = camera.projectWorld(c + rv.frame.u * scale) - pc;
@@ -364,8 +422,8 @@ class KnotScene extends ChangeNotifier {
 
   void _updateCamera(double dt) {
     final sway = calm ? 0.0 : 1.0;
-    camera.yaw = _yaw + sway * 0.07 * math.sin(time * 0.33);
-    camera.pitch = _pitch + sway * 0.025 * math.sin(time * 0.24 + 1);
+    camera.yaw = _yaw + sway * 0.06 * math.sin(time * 0.33);
+    camera.pitch = _pitch + sway * 0.02 * math.sin(time * 0.24 + 1);
     camera.update();
     if (size.isEmpty) return;
 
@@ -396,14 +454,16 @@ class KnotScene extends ChangeNotifier {
       }
       final w = math.max(0.5, maxX - minX) + 0.5;
       final h = math.max(0.5, maxY - minY) + 0.5;
-      final shortest = math.min(size.width, size.height);
+      final top = math.min(topInset, size.height * 0.3);
+      final room = size.height - top;
+      final shortest = math.min(size.width, room);
       _unitGoal = math.min(
-        math.min(size.width * 0.94 / w, size.height * 0.94 / h),
-        shortest * 0.26,
+        math.min(size.width * 0.94 / w, room * 0.94 / h),
+        shortest * 0.27,
       );
       _centerGoal = Offset(
         size.width / 2 - (minX + maxX) / 2 * _unitGoal,
-        size.height / 2 + (minY + maxY) / 2 * _unitGoal,
+        top + room / 2 + (minY + maxY) / 2 * _unitGoal,
       );
     }
     if (_snap || calm) {
@@ -420,11 +480,11 @@ class KnotScene extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------ geometry
-  /// Projects every visible ring into depth-sorted tube segments.
+  /// Projects every visible ring into lit cross-sections and depth-sorted
+  /// tube segments.
   FrameData buildFrame() {
     final frame = FrameData();
-    final light = _light.normalized();
-    final steps = (camera.unit * 0.8).round().clamp(36, 72);
+    const eyePoint = Vec3(0, 0, -Camera.focal);
     var zNear = double.infinity, zFar = -double.infinity;
 
     for (var ri = 0; ri < rings.length; ri++) {
@@ -446,6 +506,9 @@ class KnotScene extends ChangeNotifier {
         }
       }
       final angle = rv.angle + shake;
+      final f = rv.frame;
+      // Round rings turn; frames stay put and only their opening is placed.
+      final turnShape = f.round ? 0.0 : shake;
 
       // Openings. A sealed ring is closed; its opening grows in when unsealed.
       var gapWidth = kGapAngle;
@@ -460,86 +523,115 @@ class KnotScene extends ChangeNotifier {
           ? [angle, angle + math.pi]
           : [angle];
       final arcs = _arcsFor(gapCentres, gapWidth);
+      final capped = gapWidth > 0.001;
 
-      final center = rv.frame.center + lift;
+      final center = f.center + lift;
       final vc = camera.toView(center);
+      final tubeWorld = kTubeRadius * scale;
       final outline = RingOutline(
         ri,
         camera.project(vc),
-        2 * kTubeRadius * camera.unit * camera.scaleAt(vc.z) * scale,
+        2 * tubeWorld * camera.unit * camera.scaleAt(vc.z),
       );
       frame.outlines[ri] = outline;
+      final trace = RingTrace(ri, outline.tube / 2);
+      frame.traces.add(trace);
 
+      // Enough stations that each piece of tube is a few pixels long.
+      final ringPx = f.radius * camera.unit * camera.scaleAt(vc.z);
+      final steps = (ringPx * 0.55).round().clamp(32, 72);
       final markAngle =
           angle + (rv.def.kind == RingKind.twin ? math.pi / 2 : math.pi);
+      final geared = rv.def.kind == RingKind.geared;
       var index = 0;
-      // One seal dot and one colour mark per ring, even when the angle falls
-      // on the boundary between two segments.
       var sealPlaced = false, markPlaced = false;
+
       for (final arc in arcs) {
-        final n = math.max(2, (steps * arc.$2 / (2 * math.pi)).round());
-        Offset? prev;
-        var prevZ = 0.0;
-        Vec3? prevN;
-        var prevTheta = 0.0;
+        final n = math.max(4, (steps * arc.$2 / (2 * math.pi)).round());
+        final run = TubeRun(ri, age, rel > 0, capped)..firstIndex = index;
+        frame.runs.add(run);
+        Vec3? prevSide;
         for (var i = 0; i <= n; i++) {
           final theta = arc.$1 + arc.$2 * i / n;
-          final radial = rv.frame.radial(theta);
-          final world = center + radial * (rv.frame.radiusAt(theta) * scale);
+          final shapeTheta = theta + turnShape;
+          final world =
+              center + f.radial(shapeTheta) * (f.radiusAt(shapeTheta) * scale);
+          // Direction of travel along the tube, found numerically so it is
+          // right for frames as well as circles.
+          const h = 0.02;
+          final ahead =
+              f.radial(shapeTheta + h) * f.radiusAt(shapeTheta + h) -
+              f.radial(shapeTheta - h) * f.radiusAt(shapeTheta - h);
           final v = camera.toView(world);
+          final tangent = camera.rotate(ahead).normalized();
+          final eye = (eyePoint - v).normalized();
+          var side = tangent.cross(eye);
+          final sideLength = side.length;
+          side = sideLength < 1e-4
+              ? (prevSide ?? const Vec3(1, 0, 0))
+              : side * (1 / sideLength);
+          // Keep the same side of the tube on the same side of the strip.
+          if (prevSide != null && side.dot(prevSide) < 0) side = side * -1;
+          // Where the tube points almost straight at the viewer, "across"
+          // is poorly defined: lean on the previous station so the strip
+          // does not twist.
+          if (prevSide != null && sideLength < 0.22) {
+            final keep = 1 - sideLength / 0.22;
+            side = (side * (1 - keep) + prevSide * keep).normalized();
+          }
+          prevSide = side;
+          var front = eye - tangent * tangent.dot(eye);
+          final frontLength = front.length;
+          front = frontLength < 1e-4 ? eye : front * (1 / frontLength);
+
           final p = camera.project(v);
-          final nv = camera.rotate(radial);
+          final station = Station(
+            theta,
+            p,
+            v.z,
+            camera.project(v + side * tubeWorld) - p,
+            camera.project(v + tangent * tubeWorld) - p,
+            side,
+            front,
+            tangent,
+            eye,
+          );
+          if (rv.sealed && _near(theta, angle, kGapAngle / 2)) {
+            station.band = true;
+          }
+          station.rib = geared && i % 3 == 0 && i != 0 && i != n;
+          run.stations.add(station);
+          frame.stationCount++;
+
           outline.points.add(p);
           outline.thetas.add(theta);
-          outline.depths.add(v.z);
-          if (prev != null) {
-            final z = (prevZ + v.z) / 2;
-            final nx = (prevN!.x + nv.x) / 2,
-                ny = (prevN.y + nv.y) / 2,
-                nz = (prevN.z + nv.z) / 2;
-            final l = (0.5 + 0.5 * (nx * light.x + ny * light.y + nz * light.z))
-                .clamp(0.0, 1.0);
-            final mid = (prevTheta + theta) / 2;
-            final seg = Seg(
-              ri,
-              index,
-              prev,
-              p,
-              z,
-              2 * kTubeRadius * camera.unit * camera.scaleAt(z) * scale,
-              l,
-              mid,
-              age,
-            );
-            if (rv.sealed && _near(mid, angle, kGapAngle / 2)) {
-              seg.band = true;
-              if (!sealPlaced && _near(mid, angle, arc.$2 / n * 0.51)) {
-                seg.deco = 1;
-                sealPlaced = true;
-              }
-            } else if (!markPlaced &&
-                _near(mid, markAngle, arc.$2 / n * 0.51)) {
+          trace.xs.add(p.dx);
+          trace.ys.add(p.dy);
+          trace.zs.add(v.z);
+          trace.thetas.add(theta);
+
+          if (i > 0) {
+            final before = run.stations[i - 1];
+            final z = (before.z + v.z) / 2;
+            final seg = TubeSeg(run, i - 1, index, z);
+            final mid = (before.theta + theta) / 2;
+            final half = arc.$2 / n * 0.51;
+            if (rv.sealed && !sealPlaced && _near(mid, angle, half)) {
+              seg.deco = 1;
+              sealPlaced = true;
+            } else if (!markPlaced && _near(mid, markAngle, half)) {
               seg.deco = 2;
               markPlaced = true;
-            } else if (rv.def.kind == RingKind.geared && index % 4 == 1) {
-              seg.deco = 3;
-            } else if (rv.def.kind == RingKind.fixed &&
-                _near(mid % (math.pi / 2), math.pi / 4, arc.$2 / n * 0.51)) {
+            } else if (!f.round &&
+                f.shape == RingShape.square &&
+                _near(mid % (math.pi / 2), math.pi / 4, half)) {
               seg.deco = 4;
-            }
-            if (gapWidth > 0.001) {
-              seg.capA = i == 1;
-              seg.capB = i == n;
             }
             frame.segs.add(seg);
             if (z < zNear) zNear = z;
             if (z > zFar) zFar = z;
             index++;
           }
-          prev = p;
-          prevZ = v.z;
-          prevN = nv;
-          prevTheta = theta;
         }
       }
     }
@@ -575,41 +667,21 @@ class KnotScene extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------ touch
-  /// The ring under [p], preferring the nearest one when several overlap.
-  HitResult? hit(Offset p, {double reach = 28}) {
+  /// The ring a finger at [p] means. See [pickRing] for the rule.
+  HitResult? hit(Offset p, {double reach = 26}) {
     final frame = lastFrame;
     if (frame == null) return null;
-    var bestScore = double.infinity;
-    HitResult? best;
-    for (final o in frame.outlines.values) {
-      final rv = rings[o.ring];
-      if (rv.gone || rv.leaving || rv.releaseStart >= 0) continue;
-      for (var i = 0; i + 1 < o.points.length; i++) {
-        if ((o.thetas[i + 1] - o.thetas[i]).abs() > 0.5) {
-          continue; // across a gap
-        }
-        final d = _distance(p, o.points[i], o.points[i + 1]);
-        if (d > reach) continue;
-        // Nearer rings win ties: 1 world unit of depth is worth 6 pixels.
-        final score = d + (o.depths[i] - frame.zNear) * 6;
-        if (score < bestScore) {
-          bestScore = score;
-          best = HitResult(o.ring, (o.thetas[i] + o.thetas[i + 1]) / 2);
-        }
-      }
-    }
-    return best;
-  }
-
-  static double _distance(Offset p, Offset a, Offset b) {
-    final ab = b - a;
-    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
-    if (len2 == 0) return (p - a).distance;
-    final t = (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2).clamp(
-      0.0,
-      1.0,
+    final pick = pickRing(
+      frame.traces.where((t) {
+        final rv = rings[t.ring];
+        return !rv.gone && !rv.leaving && rv.releaseStart < 0;
+      }),
+      p.dx,
+      p.dy,
+      reach: reach,
+      depthWeight: 6,
     );
-    return (p - (a + ab * t)).distance;
+    return pick == null ? null : HitResult(pick.ring, pick.theta);
   }
 
   /// How far (in radians) a ring turns when the finger holding it at local
@@ -617,8 +689,8 @@ class KnotScene extends ChangeNotifier {
   /// finger along the ring.
   double dragDelta(int ring, double theta, Offset delta) {
     final f = rings[ring].frame;
-    final a = camera.projectWorld(f.pointAt(theta - 0.05));
-    final b = camera.projectWorld(f.pointAt(theta + 0.05));
+    final a = camera.projectWorld(f.center + f.radial(theta - 0.05) * f.radius);
+    final b = camera.projectWorld(f.center + f.radial(theta + 0.05) * f.radius);
     final tangent = (b - a) / 0.1; // pixels per radian
     final floor = camera.unit * 0.35;
     final len2 = math.max(tangent.distanceSquared, floor * floor);

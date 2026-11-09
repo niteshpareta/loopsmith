@@ -5,6 +5,9 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 
 import '../game/economy.dart';
 
+/// Why a purchase did not go through. The screens put this into words.
+enum StoreError { unreachable, failed, notStarted, notRestored }
+
 /// In-app purchases behind one interface.
 abstract class StoreService extends ChangeNotifier {
   /// Called once for every purchase that should be granted, including
@@ -17,8 +20,8 @@ abstract class StoreService extends ChangeNotifier {
   /// A purchase is in progress.
   bool get busy;
 
-  /// Why the last purchase did not go through, in plain words.
-  String? get lastError;
+  /// Why the last purchase did not go through, if it did not.
+  StoreError? get lastError;
 
   /// Localised price from the store, or null if the product is not loaded.
   String? price(String productId);
@@ -35,7 +38,7 @@ class NoStore extends StoreService {
   @override
   bool get busy => false;
   @override
-  String? get lastError => null;
+  StoreError? get lastError => null;
   @override
   String? price(String productId) => null;
   @override
@@ -56,7 +59,7 @@ class IapStore extends StoreService {
   final Map<String, ProductDetails> _products = {};
   bool _available = false;
   bool _busy = false;
-  String? _error;
+  StoreError? _error;
 
   static const _ids = {Economy.removeAdsId, Economy.starterKitId};
 
@@ -65,7 +68,7 @@ class IapStore extends StoreService {
   @override
   bool get busy => _busy;
   @override
-  String? get lastError => _error;
+  StoreError? get lastError => _error;
   @override
   String? price(String productId) => _products[productId]?.price;
 
@@ -78,7 +81,7 @@ class IapStore extends StoreService {
         _onPurchases,
         onError: (Object e) {
           _busy = false;
-          _error = 'The store could not be reached. Try again.';
+          _error = StoreError.unreachable;
           notifyListeners();
         },
       );
@@ -105,8 +108,7 @@ class IapStore extends StoreService {
           onGranted?.call(p.productID);
         case PurchaseStatus.error:
           _busy = false;
-          _error =
-              'The purchase did not go through. You have not been charged.';
+          _error = StoreError.failed;
         case PurchaseStatus.canceled:
           _busy = false;
       }
@@ -128,7 +130,7 @@ class IapStore extends StoreService {
       );
     } catch (e) {
       _busy = false;
-      _error = 'The purchase could not be started. Try again.';
+      _error = StoreError.notStarted;
       notifyListeners();
     }
   }
@@ -139,7 +141,7 @@ class IapStore extends StoreService {
     try {
       await _iap.restorePurchases();
     } catch (e) {
-      _error = 'Purchases could not be restored. Try again.';
+      _error = StoreError.notRestored;
       notifyListeners();
     }
   }

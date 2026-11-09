@@ -19,12 +19,15 @@ enum RingKind {
   /// One opening. Turning it turns its partner the opposite way.
   geared,
 
-  /// One opening, cannot be turned. Drawn as a squared frame.
+  /// One opening, cannot be turned. Drawn as a frame, not a circle.
   fixed,
 
   /// No opening until its key ring ([RingDef.partner]) has been freed.
   sealed,
 }
+
+/// The outline of a ring. Only fixed frames use the non-round shapes.
+enum RingShape { round, square, triangle, dee }
 
 /// Number of ring colours a level can use.
 const int kColorCount = 6;
@@ -58,6 +61,10 @@ class RingDef {
     required this.plane,
     required this.turn,
     this.partner = -1,
+    this.tilt = 0,
+    this.tiltAxis = 0,
+    this.size = 100,
+    this.shape = RingShape.round,
   });
 
   final int id;
@@ -77,16 +84,40 @@ class RingDef {
   /// Geared partner, or the key ring for a sealed ring. -1 when unused.
   final int partner;
 
-  RingDef copyWith({int? color, RingKind? kind, int? turn, int? partner}) =>
-      RingDef(
-        id: id,
-        color: color ?? this.color,
-        kind: kind ?? this.kind,
-        cell: cell,
-        plane: plane,
-        turn: turn ?? this.turn,
-        partner: partner ?? this.partner,
-      );
+  /// Lean, in degrees, about the axis through the ring's link points. It
+  /// changes how the knot looks, never how it plays: the link points stay
+  /// where they are.
+  final int tilt;
+
+  /// The axis the ring leans about: 0 is its u axis, 1 is its v axis.
+  final int tiltAxis;
+
+  /// Radius as a percentage of the standard ring.
+  final int size;
+  final RingShape shape;
+
+  RingDef copyWith({
+    int? color,
+    RingKind? kind,
+    int? turn,
+    int? partner,
+    int? tilt,
+    int? tiltAxis,
+    int? size,
+    RingShape? shape,
+  }) => RingDef(
+    id: id,
+    color: color ?? this.color,
+    kind: kind ?? this.kind,
+    cell: cell,
+    plane: plane,
+    turn: turn ?? this.turn,
+    partner: partner ?? this.partner,
+    tilt: tilt ?? this.tilt,
+    tiltAxis: tiltAxis ?? this.tiltAxis,
+    size: size ?? this.size,
+    shape: shape ?? this.shape,
+  );
 
   List<int> toJson() => [
     color,
@@ -97,6 +128,10 @@ class RingDef {
     plane.index,
     turn,
     partner,
+    tilt,
+    tiltAxis,
+    size,
+    shape.index,
   ];
 
   static RingDef fromJson(int id, List<dynamic> j) => RingDef(
@@ -107,6 +142,10 @@ class RingDef {
     plane: RingPlane.values[j[5] as int],
     turn: j[6] as int,
     partner: j[7] as int,
+    tilt: j.length > 8 ? j[8] as int : 0,
+    tiltAxis: j.length > 9 ? j[9] as int : 0,
+    size: j.length > 10 ? j[10] as int : 100,
+    shape: j.length > 11 ? RingShape.values[j[11] as int] : RingShape.round,
   );
 }
 
@@ -155,6 +194,8 @@ class LevelDef {
     this.par = 0,
     this.solution = const [],
     this.rating = 0,
+    this.camYaw = -0.5,
+    this.camPitch = 0.42,
   }) : links = computeLinks(rings),
        assert(rings.length <= kMaxRings) {
     linksOf = List.generate(rings.length, (_) => <LinkEnd>[]);
@@ -194,6 +235,11 @@ class LevelDef {
   /// Generator's difficulty estimate, 0 (gentle) to 1 (hard).
   final double rating;
 
+  /// The starting view, chosen by the generator so every ring can be seen
+  /// and tapped.
+  final double camYaw;
+  final double camPitch;
+
   final List<LinkDef> links;
   late final List<List<LinkEnd>> linksOf;
   late final List<int> pegOfColor;
@@ -201,6 +247,18 @@ class LevelDef {
   bool get hasPegs => pegs.isNotEmpty;
 
   Set<RingKind> get kinds => {for (final r in rings) r.kind};
+
+  LevelDef withCamera(double yaw, double pitch) => LevelDef(
+    id: id,
+    rings: rings,
+    pegs: pegs,
+    tray: tray,
+    par: par,
+    solution: solution,
+    rating: rating,
+    camYaw: yaw,
+    camPitch: pitch,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -212,10 +270,15 @@ class LevelDef {
       for (final m in solution) [m.ring, m.delta],
     ],
     'rating': double.parse(rating.toStringAsFixed(2)),
+    'cam': [
+      double.parse(camYaw.toStringAsFixed(2)),
+      double.parse(camPitch.toStringAsFixed(2)),
+    ],
   };
 
   static LevelDef fromJson(Map<String, dynamic> j) {
     final r = j['r'] as List<dynamic>;
+    final cam = j['cam'] as List<dynamic>?;
     return LevelDef(
       id: j['id'] as int,
       rings: [
@@ -233,6 +296,8 @@ class LevelDef {
           Move((m as List<dynamic>)[0] as int, m[1] as int),
       ],
       rating: (j['rating'] as num).toDouble(),
+      camYaw: cam == null ? -0.5 : (cam[0] as num).toDouble(),
+      camPitch: cam == null ? 0.42 : (cam[1] as num).toDouble(),
     );
   }
 }

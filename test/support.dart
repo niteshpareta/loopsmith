@@ -8,6 +8,7 @@ import 'package:loopsmith/services/audio.dart';
 import 'package:loopsmith/services/haptics.dart';
 import 'package:loopsmith/services/levels.dart';
 import 'package:loopsmith/services/profile.dart';
+import 'package:loopsmith/services/reminders.dart';
 import 'package:loopsmith/services/services.dart';
 import 'package:loopsmith/services/store.dart';
 
@@ -20,6 +21,7 @@ List<LevelDef> _read(String path) => [
 LevelRepository loadLevels() => LevelRepository(
   _read('assets/levels/campaign.json'),
   _read('assets/levels/daily.json'),
+  _read('assets/levels/weekly.json'),
 );
 
 /// A reward ad that is always ready and always pays out.
@@ -53,6 +55,7 @@ class TestWorld {
       ads: ads ?? NoAds(),
       store: NoStore(),
       analytics: analytics,
+      reminders: reminders,
     );
     // Services turns vibration on from the saved settings; keep tests quiet.
     profile.settings.vibration = false;
@@ -63,6 +66,7 @@ class TestWorld {
   final MemoryStore store = MemoryStore();
   final SilentAudio audio = SilentAudio();
   final RecordingAnalytics analytics = RecordingAnalytics();
+  final NoReminders reminders = NoReminders();
   late final PlayerProfile profile;
   late final Services services;
 }

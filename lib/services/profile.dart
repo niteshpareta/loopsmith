@@ -46,6 +46,13 @@ class GameSettings {
   bool leftHanded = false;
   bool reduceMotion = false;
 
+  /// Ask the phone to show one reminder in the evening. Off until the
+  /// player turns it on.
+  bool reminder = false;
+
+  /// `system` follows the phone; otherwise a language code such as `es`.
+  String language = 'system';
+
   Map<String, dynamic> toJson() => {
     'music': music,
     'sound': sound,
@@ -54,6 +61,8 @@ class GameSettings {
     'marks': colorMarks,
     'left': leftHanded,
     'calm': reduceMotion,
+    'remind': reminder,
+    'lang': language,
   };
 
   void load(Map<String, dynamic> j) {
@@ -64,6 +73,8 @@ class GameSettings {
     colorMarks = j['marks'] as bool? ?? false;
     leftHanded = j['left'] as bool? ?? false;
     reduceMotion = j['calm'] as bool? ?? false;
+    reminder = j['remind'] as bool? ?? false;
+    language = j['lang'] as String? ?? 'system';
   }
 }
 
@@ -85,6 +96,8 @@ class ClearOutcome {
     this.streak = 0,
     this.saverUsed = false,
     this.saverEarned = false,
+    this.weeklyDone = 0,
+    this.weeklyBonus = false,
   });
   final int stars;
   final int coins;
@@ -98,6 +111,11 @@ class ClearOutcome {
   final int streak;
   final bool saverUsed;
   final bool saverEarned;
+
+  /// Weekly run only: knots finished this week, and whether this clear
+  /// completed the run and paid its bonus.
+  final int weeklyDone;
+  final bool weeklyBonus;
 }
 
 /// Everything the game remembers about the player. Saved as one JSON blob.
@@ -131,6 +149,11 @@ class PlayerProfile extends ChangeNotifier {
   String? lastDaily;
   final Map<String, DailyRecord> daily = {};
   String? lastGift;
+
+  /// The weekly run in progress, and which of its seven knots are done.
+  int weeklyWeek = -1;
+  final Set<int> weeklyKnots = {};
+  int weeklyRuns = 0;
 
   bool adsRemoved = false;
   bool starterKit = false;
@@ -184,6 +207,11 @@ class PlayerProfile extends ChangeNotifier {
         daily[k] = DailyRecord(l[0] as int, l[1] as int, l[2] as int);
       });
       lastGift = j['lastGift'] as String?;
+      weeklyWeek = j['week'] as int? ?? -1;
+      weeklyKnots
+        ..clear()
+        ..addAll((j['weekKnots'] as List<dynamic>? ?? []).cast<int>());
+      weeklyRuns = j['weekRuns'] as int? ?? 0;
       adsRemoved = j['adsRemoved'] as bool? ?? false;
       starterKit = j['starterKit'] as bool? ?? false;
       seenTips
@@ -220,6 +248,9 @@ class PlayerProfile extends ChangeNotifier {
         e.key: [e.value.moves, e.value.par, e.value.stars],
     },
     'lastGift': lastGift,
+    'week': weeklyWeek,
+    'weekKnots': weeklyKnots.toList(),
+    'weekRuns': weeklyRuns,
     'adsRemoved': adsRemoved,
     'starterKit': starterKit,
     'tips': seenTips.toList(),
@@ -325,6 +356,49 @@ class PlayerProfile extends ChangeNotifier {
       streak: streak,
       saverUsed: saverUsed,
       saverEarned: saverEarned,
+    );
+  }
+
+  /// Which of this week's seven knots are done. A new week starts empty.
+  Set<int> weeklyProgress() {
+    final week = weekIndex(now());
+    if (week != weeklyWeek) return const {};
+    return weeklyKnots;
+  }
+
+  /// Records a cleared weekly-run knot. Finishing all seven pays a bonus.
+  ClearOutcome completeWeekly(int index, int moves, int par) {
+    final week = weekIndex(now());
+    if (week != weeklyWeek) {
+      weeklyWeek = week;
+      weeklyKnots.clear();
+    }
+    final earned = Economy.starsFor(moves, par);
+    final first = weeklyKnots.add(index);
+    var reward = 0;
+    var bonus = false;
+    if (first) {
+      reward = Economy.weeklyKnotReward;
+      if (weeklyKnots.length == 7) {
+        bonus = true;
+        weeklyRuns++;
+        reward += Economy.weeklyBonus;
+        for (var i = 0; i < Economy.weeklyBonusRings; i++) {
+          _awardRing();
+        }
+      }
+      coins += reward;
+    }
+    final unlockedNow = _refreshUnlocks();
+    _changed();
+    return ClearOutcome(
+      stars: earned,
+      coins: reward,
+      firstClear: first,
+      ringEarned: bonus,
+      unlockedSkins: unlockedNow,
+      weeklyDone: weeklyKnots.length,
+      weeklyBonus: bonus,
     );
   }
 
@@ -466,6 +540,9 @@ class PlayerProfile extends ChangeNotifier {
     streakSavers = 0;
     lastDaily = null;
     daily.clear();
+    weeklyWeek = -1;
+    weeklyKnots.clear();
+    weeklyRuns = 0;
     seenTips.clear();
     notifyListeners();
     await save();

@@ -10,6 +10,12 @@ class Economy {
   static int clearReward(int stars) => 10 + 5 * stars;
   static const int dailyReward = 50;
 
+  /// Weekly run: coins for each of the seven knots, and the prize for
+  /// finishing all of them.
+  static const int weeklyKnotReward = 20;
+  static const int weeklyBonus = 150;
+  static const int weeklyBonusRings = 2;
+
   static const int hintPackPrice = 100;
   static const int hintPackSize = 3;
   static const int undoPrice = 25;

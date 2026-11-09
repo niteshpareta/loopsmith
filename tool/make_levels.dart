@@ -8,11 +8,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:loopsmith/game/generator.dart';
+import 'package:loopsmith/game/geometry.dart';
 import 'package:loopsmith/game/knot.dart';
 import 'package:loopsmith/game/level.dart';
+import 'package:loopsmith/game/projection.dart';
 
 const campaignCount = 300;
 const dailyCount = 90;
+const weeklyCount = 56; // eight weeks of seven knots, then the cycle repeats
 
 void main(List<String> args) {
   final watch = Stopwatch()..start();
@@ -30,6 +33,14 @@ void main(List<String> args) {
     daily.add(level);
     if (i % 15 == 0) _report('D$i', level);
   }
+  final weekly = <LevelDef>[];
+  for (var i = 0; i < weeklyCount; i++) {
+    final level = generateLevel(weeklySpec(i), 200000 + i);
+    _verify(level);
+    weekly.add(level);
+    if (i < 7) _report('W$i', level);
+  }
+  _write('assets/levels/weekly.json', weekly);
   _write('assets/levels/campaign.json', campaign);
   _write('assets/levels/daily.json', daily);
 
@@ -50,6 +61,13 @@ void main(List<String> args) {
       'avg rating ${avg(slice.map((l) => l.rating)).toStringAsFixed(2)}',
     );
   }
+  final all = [...campaign, ...daily, ...weekly];
+  final scores = all.map(_viewScore).toList()..sort();
+  stdout.writeln(
+    'tap accuracy on the hardest ring: lowest ${scores.first.toStringAsFixed(2)}, '
+    'median ${scores[scores.length ~/ 2].toStringAsFixed(2)}, '
+    'levels under ${kGoodView.toStringAsFixed(2)}: ${scores.where((s) => s < kGoodView).length} of ${scores.length}',
+  );
   stdout.writeln('done in ${watch.elapsed.inSeconds}s');
 }
 
@@ -66,10 +84,21 @@ void _verify(LevelDef level) {
     }
     knot.apply(m.ring, m.delta);
   }
+  final problem = geometryProblem(level.rings);
+  if (problem != null) throw StateError('level ${level.id}: $problem');
+  if (level.rings.length > kMaxKnotRings) {
+    throw StateError('level ${level.id}: too many rings to read on a phone');
+  }
   if (!knot.solved) {
     throw StateError('level ${level.id}: solution does not clear it');
   }
 }
+
+double _viewScore(LevelDef l) => readability(
+  [for (final r in l.rings) RingFrame(r)],
+  l.camYaw,
+  l.camPitch,
+).score;
 
 void _report(String name, LevelDef l) {
   final kinds = l.kinds
@@ -78,7 +107,8 @@ void _report(String name, LevelDef l) {
       .join(',');
   stdout.writeln(
     '$name: ${l.rings.length} rings, ${l.links.length} links, '
-    '${l.pegs.length} pegs, par ${l.par}, rating ${l.rating.toStringAsFixed(2)}'
+    '${l.pegs.length} pegs, par ${l.par}, rating ${l.rating.toStringAsFixed(2)}, '
+    'tap accuracy ${_viewScore(l).toStringAsFixed(2)}'
     '${kinds.isEmpty ? '' : ', $kinds'}',
   );
 }

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../game/economy.dart';
 import '../game/level.dart';
+import '../l10n/strings.dart';
 import '../render/flight_layer.dart';
 import '../render/knot_view.dart';
 import '../render/palette.dart';
@@ -17,26 +19,38 @@ import 'play_controller.dart';
 
 /// The level screen: pegs on top, the knot in the middle, the tray and
 /// boosters under the thumb.
+/// Build with `--dart-define=DEMO=<level>` and the game opens on that level
+/// and plays itself, one level after another. Meant for recording store and
+/// ad videos; it is off in a normal build.
+const int kDemoLevel = int.fromEnvironment('DEMO');
+
 class PlayScreen extends StatefulWidget {
   const PlayScreen({
     super.key,
     required this.level,
     this.mode = PlayMode.campaign,
     this.dailyNumber = 0,
+    this.weeklyIndex = 0,
   });
 
   final LevelDef level;
   final PlayMode mode;
   final int dailyNumber;
+  final int weeklyIndex;
 
   static Route<void> route(
     LevelDef level, {
     PlayMode mode = PlayMode.campaign,
     int dailyNumber = 0,
+    int weeklyIndex = 0,
   }) => PageRouteBuilder<void>(
     transitionDuration: const Duration(milliseconds: 280),
-    pageBuilder: (_, _, _) =>
-        PlayScreen(level: level, mode: mode, dailyNumber: dailyNumber),
+    pageBuilder: (_, _, _) => PlayScreen(
+      level: level,
+      mode: mode,
+      dailyNumber: dailyNumber,
+      weeklyIndex: weeklyIndex,
+    ),
     transitionsBuilder: (_, anim, _, child) =>
         FadeTransition(opacity: anim, child: child),
   );
@@ -58,7 +72,11 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_controller != null) return;
+    final strings = S.of(context);
+    if (_controller != null) {
+      _controller!.strings = strings;
+      return;
+    }
     _services = AppScope.of(context);
     _controller =
         PlayController(
@@ -67,9 +85,29 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
             mode: widget.mode,
             scene: _scene,
             dailyNumber: widget.dailyNumber,
+            weeklyIndex: widget.weeklyIndex,
           )
           ..host = this
+          ..strings = strings
           ..start();
+    if (kDemoLevel > 0) _runDemo();
+  }
+
+  /// Plays the stored solution at a watchable pace, then moves on.
+  Future<void> _runDemo() async {
+    Future<void> wait(int ms) =>
+        Future<void>.delayed(Duration(milliseconds: ms));
+    await wait(1700);
+    for (final m in widget.level.solution) {
+      if (!mounted || c.phase != PlayPhase.playing) break;
+      c.dragEnd(m.ring, m.delta);
+      await wait(1300 + 260 * m.delta);
+    }
+    for (var i = 0; i < 40 && mounted && c.phase != PlayPhase.cleared; i++) {
+      await wait(200);
+    }
+    await wait(3400);
+    if (mounted && _hasNext) _next();
   }
 
   @override
@@ -162,13 +200,39 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
 
   void _leave() => Navigator.of(context).maybePop();
 
+  /// The weekly knot to play after this one, or -1 when the run is done.
+  int get _nextWeekly {
+    final done = _services.profile.weeklyProgress();
+    for (var i = 0; i < 7; i++) {
+      if (!done.contains(i)) return i;
+    }
+    return -1;
+  }
+
+  bool get _hasNext => switch (widget.mode) {
+    PlayMode.campaign => widget.level.id < _services.levels.count,
+    PlayMode.daily => false,
+    PlayMode.weekly => _nextWeekly >= 0,
+  };
+
   Future<void> _next() async {
     final levels = _services.levels;
     final nav = Navigator.of(context);
-    await _services.ads.showInterstitialIfAllowed(widget.level.id);
+    if (kDemoLevel == 0) {
+      await _services.ads.showInterstitialIfAllowed(widget.level.id);
+    }
     if (!mounted) return;
-    if (widget.mode == PlayMode.campaign && widget.level.id < levels.count) {
+    if (widget.mode == PlayMode.campaign && _hasNext) {
       nav.pushReplacement(PlayScreen.route(levels.level(widget.level.id + 1)));
+    } else if (widget.mode == PlayMode.weekly && _hasNext) {
+      final index = _nextWeekly;
+      nav.pushReplacement(
+        PlayScreen.route(
+          levels.weeklyFor(_services.now())[index],
+          mode: PlayMode.weekly,
+          weeklyIndex: index,
+        ),
+      );
     } else {
       nav.maybePop();
     }
@@ -177,6 +241,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     final settings = _services.profile.settings;
     // Honour the phone's own reduce-motion setting as well as the game's.
     final calm =
@@ -197,11 +262,11 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
                   Narrow(
                     child: Column(
                       children: [
-                        _header(p, direction),
-                        _goals(p),
+                        _header(p, s, direction),
+                        _goals(p, s),
                         Expanded(child: _knotArea(p)),
-                        if (widget.level.hasPegs) _tray(p),
-                        _boosters(p, direction),
+                        if (widget.level.hasPegs) _tray(p, s),
+                        _boosters(p, s, direction),
                         const SizedBox(height: 10),
                       ],
                     ),
@@ -214,6 +279,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
                   if (c.phase == PlayPhase.cleared && c.outcome != null)
                     ClearOverlay(
                       controller: c,
+                      hasNext: _hasNext,
                       onNext: _next,
                       onReplay: c.restart,
                       onLeave: _leave,
@@ -227,14 +293,14 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
     );
   }
 
-  Widget _header(AppPalette p, TextDirection direction) => Padding(
+  Widget _header(AppPalette p, S s, TextDirection direction) => Padding(
     padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
     child: Row(
       textDirection: direction,
       children: [
         _RoundButton(
           icon: Icons.arrow_back_rounded,
-          label: 'Leave level',
+          label: s('play.leave'),
           onTap: _leave,
         ),
         const SizedBox(width: 10),
@@ -252,7 +318,9 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
               ),
               const SizedBox(height: 2),
               Text(
-                'Moves ${c.knot.moves} · Par ${widget.level.par}',
+                s('play.moves', {'n': c.knot.moves, 'par': widget.level.par}),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   p,
                   13,
@@ -265,7 +333,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
         const SizedBox(width: 10),
         _RoundButton(
           icon: Icons.refresh_rounded,
-          label: 'Restart level',
+          label: s('play.restart'),
           onTap: c.phase == PlayPhase.playing && c.knot.moves > 0
               ? c.restart
               : null,
@@ -275,7 +343,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
   );
 
   /// Pegs, or on the first levels a simple row that fills as rings come free.
-  Widget _goals(AppPalette p) {
+  Widget _goals(AppPalette p, S s) {
     final level = widget.level;
     final size = _slotSize;
     final marks = _services.profile.settings.colorMarks;
@@ -283,7 +351,10 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
     if (!level.hasPegs) {
       children.add(
         _SlotGroup(
-          label: 'Freed ${c.hudBowl.length} of ${level.rings.length}',
+          label: s('play.freed', {
+            'n': c.hudBowl.length,
+            'total': level.rings.length,
+          }),
           done: c.hudBowl.length == level.rings.length,
           children: [
             for (var i = 0; i < level.rings.length; i++)
@@ -304,7 +375,9 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
         final firstEmpty = filled.indexOf(null);
         children.add(
           _SlotGroup(
-            label: 'Peg ${peg + 1}',
+            label: firstEmpty < 0
+                ? s('play.peg_done', {'n': peg + 1})
+                : s('play.peg', {'n': peg + 1}),
             done: firstEmpty < 0,
             children: [
               for (var i = 0; i < level.pegs[peg].length; i++)
@@ -334,7 +407,30 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
     );
   }
 
-  Widget _knotArea(AppPalette p) => Stack(
+  /// Height the coaching tip covers at the top of the knot area.
+  double _tipHeight(AppPalette p, double width) {
+    final tip = c.tip;
+    if (tip == null) return 0;
+    final text = TextPainter(
+      text: TextSpan(text: tip, style: AppText.body(p, 14)),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: math.max(40, width - 58));
+    final height = text.height + 34;
+    text.dispose();
+    return height;
+  }
+
+  Widget _knotArea(AppPalette p) => LayoutBuilder(
+    builder: (context, box) {
+      // The knot moves down out of the tip's way, then eases back.
+      _scene.topInset = _tipHeight(p, box.maxWidth);
+      return _knotStack(p);
+    },
+  );
+
+  Widget _knotStack(AppPalette p) => Stack(
     children: [
       Positioned.fill(
         child: KnotView(
@@ -416,7 +512,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
     ],
   );
 
-  Widget _tray(AppPalette p) {
+  Widget _tray(AppPalette p, S s) {
     final level = widget.level;
     final free = c.hudTray.where((r) => r == null).length;
     final tight = free <= 1;
@@ -437,7 +533,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'TRAY',
+                s('play.tray'),
                 style: AppText.label(p, color: tight ? p.danger : p.dim),
               ),
               const SizedBox(width: 10),
@@ -460,7 +556,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
     );
   }
 
-  Widget _boosters(AppPalette p, TextDirection direction) {
+  Widget _boosters(AppPalette p, S s, TextDirection direction) {
     final profile = _services.profile;
     final playing = c.phase == PlayPhase.playing;
     return Padding(
@@ -471,10 +567,12 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
           Expanded(
             child: _Booster(
               icon: Icons.lightbulb_outline_rounded,
-              label: 'Hint',
+              label: s('booster.hint'),
               detail: c.hintBusy
-                  ? 'thinking'
-                  : (profile.hints > 0 ? '${profile.hints} left' : 'get more'),
+                  ? s('booster.thinking')
+                  : (profile.hints > 0
+                        ? s('booster.left', {'n': profile.hints})
+                        : s('booster.get_more')),
               onTap: playing && !c.hintBusy ? _hint : null,
             ),
           ),
@@ -482,8 +580,8 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
           Expanded(
             child: _Booster(
               icon: Icons.undo_rounded,
-              label: 'Undo',
-              detail: c.undoIsFree ? 'free' : '${Economy.undoPrice} coins',
+              label: s('booster.undo'),
+              detail: c.undoCost,
               onTap: c.canUndo && playing ? c.undo : null,
             ),
           ),
@@ -492,7 +590,7 @@ class _PlayScreenState extends State<PlayScreen> implements PlayHost {
             Expanded(
               child: _Booster(
                 icon: Icons.add_circle_outline_rounded,
-                label: 'Slot',
+                label: s('booster.slot'),
                 detail: c.slotCost,
                 onTap: c.canAddSlot && playing ? () => c.addSlot() : null,
               ),
@@ -560,13 +658,15 @@ class _Booster extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: p.line),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 20, color: p.brass),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Column(
+        // Longer words in other languages shrink to fit rather than clip.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: p.brass),
+              const SizedBox(width: 7),
+              Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -574,16 +674,11 @@ class _Booster extends StatelessWidget {
                     label,
                     style: AppText.body(p, 14.5, weight: FontWeight.w700),
                   ),
-                  Text(
-                    detail,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.body(p, 11.5, color: p.dim),
-                  ),
+                  Text(detail, style: AppText.body(p, 11.5, color: p.dim)),
                 ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -605,7 +700,7 @@ class _SlotGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
     return Semantics(
-      label: done ? '$label, complete' : label,
+      label: label,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
@@ -706,12 +801,12 @@ class _FailCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
-    final left = controller.knot.remaining;
+    final s = S.of(context);
     return Positioned.fill(
       child: ColoredBox(
         color: p.shadow.withValues(alpha: 0.7),
         child: Center(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(22),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 360),
@@ -719,8 +814,8 @@ class _FailCard extends StatelessWidget {
                 tween: Tween(begin: 0.92, end: 1),
                 duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutBack,
-                builder: (_, s, child) =>
-                    Transform.scale(scale: s, child: child),
+                builder: (_, scale, child) =>
+                    Transform.scale(scale: scale, child: child),
                 child: Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -732,15 +827,13 @@ class _FailCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'The tray is full',
+                        s('fail.title'),
                         textAlign: TextAlign.center,
                         style: AppText.display(p, 20, weight: FontWeight.w500),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        left == 1
-                            ? 'You were 1 ring from clearing it.'
-                            : 'You were $left rings from clearing it.',
+                        s.count('fail.left', controller.knot.remaining),
                         textAlign: TextAlign.center,
                         style: AppText.body(p, 14.5, color: p.dim),
                       ),
@@ -749,10 +842,8 @@ class _FailCard extends StatelessWidget {
                         width: double.infinity,
                         child: BrassButton(
                           compact: true,
-                          label: 'Undo last move',
-                          detail: controller.undoIsFree
-                              ? 'free'
-                              : '${Economy.undoPrice} coins',
+                          label: s('fail.undo'),
+                          detail: controller.undoCost,
                           onTap: controller.canUndo ? controller.undo : null,
                         ),
                       ),
@@ -761,7 +852,7 @@ class _FailCard extends StatelessWidget {
                         SizedBox(
                           width: double.infinity,
                           child: GhostButton(
-                            label: 'Add a slot',
+                            label: s('fail.slot'),
                             detail: controller.slotCost,
                             onTap: () => controller.addSlot(),
                           ),
@@ -771,7 +862,7 @@ class _FailCard extends StatelessWidget {
                       SizedBox(
                         width: double.infinity,
                         child: GhostButton(
-                          label: 'Restart level',
+                          label: s('play.restart'),
                           onTap: controller.restart,
                         ),
                       ),
@@ -779,7 +870,7 @@ class _FailCard extends StatelessWidget {
                       TextButton(
                         onPressed: onLeave,
                         child: Text(
-                          'Leave',
+                          s('common.leave'),
                           style: AppText.body(p, 14, color: p.dim),
                         ),
                       ),
@@ -803,6 +894,7 @@ class _GetHints extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = AppPalette.of(context);
+    final s = S.of(context);
     return ListenableBuilder(
       listenable: Listenable.merge([services.profile, services.ads]),
       builder: (context, _) {
@@ -811,12 +903,13 @@ class _GetHints extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Out of hints',
+              s('hints.out'),
+              textAlign: TextAlign.center,
               style: AppText.display(p, 20, weight: FontWeight.w500),
             ),
             const SizedBox(height: 8),
             Text(
-              'You get one free hint every day you play.',
+              s('hints.daily'),
               textAlign: TextAlign.center,
               style: AppText.body(p, 14.5, color: p.dim),
             ),
@@ -826,8 +919,8 @@ class _GetHints extends StatelessWidget {
                 width: double.infinity,
                 child: BrassButton(
                   compact: true,
-                  label: 'Get 1 hint',
-                  detail: 'watch ad',
+                  label: s('hints.get_one'),
+                  detail: s('booster.watch'),
                   onTap: () async {
                     final nav = Navigator.of(context);
                     services.analytics.log('ad_offered', {'placement': 'hint'});
@@ -846,9 +939,11 @@ class _GetHints extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: GhostButton(
-                label: 'Get ${Economy.hintPackSize} hints',
-                detail:
-                    '${Economy.hintPackPrice} coins · you have ${profile.coins}',
+                label: s('hints.get_pack', {'n': Economy.hintPackSize}),
+                detail: s('hints.pack_detail', {
+                  'price': Economy.hintPackPrice,
+                  'have': profile.coins,
+                }),
                 onTap: profile.coins >= Economy.hintPackPrice
                     ? () {
                         if (profile.spendCoins(Economy.hintPackPrice)) {
@@ -863,7 +958,10 @@ class _GetHints extends StatelessWidget {
             const SizedBox(height: 4),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: Text('Not now', style: AppText.body(p, 14, color: p.dim)),
+              child: Text(
+                s('common.not_now'),
+                style: AppText.body(p, 14, color: p.dim),
+              ),
             ),
           ],
         );

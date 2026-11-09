@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'l10n/strings.dart';
 import 'render/palette.dart';
 import 'screens/shell.dart';
 import 'services/services.dart';
@@ -56,6 +58,18 @@ class _LoopsmithAppState extends State<LoopsmithApp>
             title: 'Loopsmith',
             debugShowCheckedModeBanner: false,
             theme: buildTheme(palette),
+            // The player's chosen language, or the phone's if they have not
+            // chosen. Anything unsupported falls back to English.
+            locale: profile.settings.language == 'system'
+                ? null
+                : Locale(profile.settings.language),
+            supportedLocales: S.locales,
+            localizationsDelegates: const [
+              S.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
             // Large system text is respected up to a point the layouts can hold.
             builder: (context, child) => MediaQuery.withClampedTextScaling(
               maxScaleFactor: 1.25,

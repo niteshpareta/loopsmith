@@ -1,0 +1,9 @@
+Sound credits
+
+Ring ticks, peg and tray knocks, button taps, the "cannot turn" click and the
+undo sound are recordings from "Interface Sounds" by Kenney (www.kenney.nl),
+released under Creative Commons Zero (CC0). No attribution is required; it is
+given here with thanks.
+
+All other effects and the three music layers are synthesised by
+tool/make_audio.py and belong to this project.
