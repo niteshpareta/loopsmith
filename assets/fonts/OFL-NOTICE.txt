@@ -1,0 +1,5 @@
+Unbounded — Copyright 2022 The Unbounded Project Authors (https://github.com/w3f/unbounded)
+Figtree — Copyright 2022 The Figtree Project Authors (https://github.com/erikdkennedy/figtree)
+
+Both typefaces are licensed under the SIL Open Font License, Version 1.1.
+The full licence text is available at https://openfontlicense.org

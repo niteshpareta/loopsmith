@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The bench colour, shown while the app starts. -->
+    <color name="bench">#18121F</color>
+</resources>
